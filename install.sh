@@ -285,13 +285,30 @@ if [[ ! -f "$INSTALL_DIR/config.ini" ]]; then
   PUBLIC_IP=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null || echo "")
   if [[ -n "$PUBLIC_IP" ]]; then
     info "Detetei IP público: $PUBLIC_IP"
-    info "Para o painel ser acessível de fora, usa este IP ou um domínio a apontar para ele."
-    info ""
   fi
 
-  read -r -p "Endpoint hostname ou IP (ex: vpn.example.com ou $PUBLIC_IP): " ENDPOINT
+  echo ""
+  echo "Endpoint (hostname ou IP) — onde os peers se vão ligar."
+  echo "  • IP fixo: usa o IP (ex: $PUBLIC_IP)"
+  echo "  • IP dinâmico: usa um hostname DDNS para não perder conexão quando o IP muda"
+  echo "    (serviços gratuitos: duckdns.org, no-ip.com, dynv6.com)"
+  echo "  • Enter vazio = usar o IP detetado acima"
+  read -r -p "Endpoint [$PUBLIC_IP]: " ENDPOINT
   ENDPOINT=${ENDPOINT:-$PUBLIC_IP}
-  [[ -n "$ENDPOINT" ]] || err "Endpoint é obrigatório"
+
+  if [[ -n "$ENDPOINT" ]]; then
+    # Aviso sobre IP dinâmico
+    if [[ "$ENDPOINT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      info ""
+      info "⚠️  Endpoint configurado como IP ($ENDPOINT)."
+      info "   Se o teu IP público for dinâmico (muda com reinícios do router),"
+      info "   os peers vão perder conexão quando mudar."
+      info ""
+      info "   Para resolver: configura um DDNS gratuito (duckdns.org / no-ip.com),"
+      info "   cria um hostname a apontar para o IP, e re-corre install.sh com esse hostname."
+      info ""
+    fi
+  fi
 
   echo ""
   echo ">>> Porta TCP para o painel web (HTTPS):"
