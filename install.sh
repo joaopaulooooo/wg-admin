@@ -153,6 +153,7 @@ print(str(list(net.hosts())[0]))
   echo "     2) 51821"
   echo "     3) 443 (disfarça-se de HTTPS, útil em redes restritas)"
   echo "     4) Outra (escrever à mão)"
+  echo "   (também podes escrever a porta diretamente — ex: 51820)"
   read -r -p "Opção [1]: " PORT_OPT
   PORT_OPT=${PORT_OPT:-1}
   case "$PORT_OPT" in
@@ -160,7 +161,13 @@ print(str(list(net.hosts())[0]))
     2) WG_PORT="51821" ;;
     3) WG_PORT="443" ;;
     4) read -r -p "Porta UDP: " WG_PORT ;;
-    *) err "Opção inválida" ;;
+    *)
+      if [[ "$PORT_OPT" =~ ^[0-9]+$ ]] && [ "$PORT_OPT" -ge 1 ] && [ "$PORT_OPT" -le 65535 ]; then
+        WG_PORT="$PORT_OPT"
+      else
+        err "Opção inválida"
+      fi
+      ;;
   esac
 
   # Descobrir interface de rede default para NAT
@@ -208,7 +215,10 @@ EOF
 
   # Arrancar wg-quick
   info "A arrancar wg-quick@wg0"
-  systemctl enable --now wg-quick@wg0
+  # Stop primeiro caso esteja meio-up de tentativas anteriores
+  systemctl stop wg-quick@wg0 2>/dev/null || true
+  ip link del wg0 2>/dev/null || true
+  systemctl start wg-quick@wg0
   sleep 1
   if systemctl is-active --quiet wg-quick@wg0; then
     info "WireGuard a correr"
@@ -316,6 +326,7 @@ if [[ ! -f "$INSTALL_DIR/config.ini" ]]; then
   echo "     2) 8443 (alternativa comum para HTTPS)"
   echo "     3) 443 (HTTPS standard — pode entrar em conflito com outros serviços)"
   echo "     4) Outra (escrever à mão)"
+  echo "   (também podes escrever a porta diretamente — ex: 51821)"
   read -r -p "Opção [1]: " LISTEN_OPT
   LISTEN_OPT=${LISTEN_OPT:-1}
   case "$LISTEN_OPT" in
@@ -323,12 +334,44 @@ if [[ ! -f "$INSTALL_DIR/config.ini" ]]; then
     2) LISTEN_PORT="8443" ;;
     3) LISTEN_PORT="443" ;;
     4) read -r -p "Porta TCP: " LISTEN_PORT ;;
-    *) err "Opção inválida" ;;
+    *)
+      if [[ "$LISTEN_OPT" =~ ^[0-9]+$ ]] && [ "$LISTEN_OPT" -ge 1 ] && [ "$LISTEN_OPT" -le 65535 ]; then
+        LISTEN_PORT="$LISTEN_OPT"
+      else
+        err "Opção inválida"
+      fi
+      ;;
   esac
 
   cp "$INSTALL_DIR/config.ini.example" "$INSTALL_DIR/config.ini"
   sed -i "s/^endpoint_host = .*/endpoint_host = $ENDPOINT/" "$INSTALL_DIR/config.ini"
   sed -i "s/^listen_port = .*/listen_port = $LISTEN_PORT/" "$INSTALL_DIR/config.ini"
+
+  # Propagar subnet e server_ip do wg0.conf para config.ini
+  if [[ -f /etc/wireguard/wg0.conf ]]; then
+    WG_SUBNET=$(python3 -c "
+import sys
+sys.path.insert(0, '$INSTALL_DIR/src')
+from pathlib import Path
+from wg_admin import wg
+parsed = wg.parse_wg_conf(Path('/etc/wireguard/wg0.conf').read_text())
+addr = parsed['interface'].get('Address', '/').split('/')[0]
+prefix = parsed['interface'].get('Address', '/').split('/')[1] if '/' in parsed['interface'].get('Address', '') else '24'
+import ipaddress
+net = ipaddress.ip_network(f'{addr}/{prefix}', strict=False)
+print(str(net))
+")
+    WG_SERVER_IP=$(python3 -c "
+import sys
+sys.path.insert(0, '$INSTALL_DIR/src')
+from pathlib import Path
+from wg_admin import wg
+parsed = wg.parse_wg_conf(Path('/etc/wireguard/wg0.conf').read_text())
+print(parsed['interface'].get('Address', '10.0.0.1/24').split('/')[0])
+")
+    sed -i "s|^subnet = .*|subnet = $WG_SUBNET|" "$INSTALL_DIR/config.ini"
+    sed -i "s|^server_ip = .*|server_ip = $WG_SERVER_IP|" "$INSTALL_DIR/config.ini"
+  fi
 
   # Auto-populate server_public_key from /etc/wireguard/wg0.conf
   if [[ -f /etc/wireguard/wg0.conf ]]; then
@@ -448,8 +491,12 @@ print(f"Public key: {peer['public_key']}")
 PYEOF
 
     # Restart wg-quick para carregar o peer novo
-    info "A reiniciar wg-quick para aplicar o peer novo"
-    systemctl restart wg-quick@wg0
+    info "A aplicar peer novo ao WireGuard"
+    # Stop primeiro se estiver a correr — 'restart' falha com 'already exists'
+    if systemctl is-active --quiet wg-quick@wg0; then
+      systemctl stop wg-quick@wg0 2>/dev/null || true
+    fi
+    systemctl start wg-quick@wg0
   fi
 fi
 
