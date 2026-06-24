@@ -372,14 +372,17 @@ print(parsed['interface'].get('Address', '10.0.0.1/24').split('/')[0])
     sed -i "s|^subnet = .*|subnet = $WG_SUBNET|" "$INSTALL_DIR/config.ini"
     sed -i "s|^server_ip = .*|server_ip = $WG_SERVER_IP|" "$INSTALL_DIR/config.ini"
   fi
+fi
 
-  # Auto-populate server_public_key from /etc/wireguard/wg0.conf
-  if [[ -f /etc/wireguard/wg0.conf ]]; then
-    SERVER_PRIV=$(grep '^PrivateKey' /etc/wireguard/wg0.conf | head -1 | sed 's/.*= *//; s/ *$//')
-    if [[ -n "$SERVER_PRIV" ]]; then
-      SERVER_PUB=$(echo "$SERVER_PRIV" | wg pubkey 2>/dev/null || true)
-      if [[ -n "$SERVER_PUB" ]]; then
-        info "Detected server public key: $SERVER_PUB"
+# --- Sempre popular server_public_key (idempotente — não depende de config.ini ser novo) ---
+if [[ -f /etc/wireguard/wg0.conf && -f "$INSTALL_DIR/config.ini" ]]; then
+  SERVER_PRIV=$(grep '^PrivateKey' /etc/wireguard/wg0.conf | head -1 | sed 's/.*= *//; s/ *$//')
+  if [[ -n "$SERVER_PRIV" ]]; then
+    SERVER_PUB=$(echo "$SERVER_PRIV" | wg pubkey 2>/dev/null || true)
+    if [[ -n "$SERVER_PUB" ]]; then
+      CURRENT_PUB=$(grep '^server_public_key' "$INSTALL_DIR/config.ini" | cut -d= -f2 | tr -d ' ')
+      if [[ "$CURRENT_PUB" != "$SERVER_PUB" ]]; then
+        info "A actualizar server_public_key no config.ini: $SERVER_PUB"
         "$INSTALL_DIR/venv/bin/python" -c "
 import configparser
 c = configparser.ConfigParser()
