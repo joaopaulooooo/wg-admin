@@ -233,6 +233,8 @@ body {
   min-width: 0;
   padding: 2.5rem 3rem 4rem;
   max-width: calc(100vw - 240px);
+  position: relative;
+  z-index: 1;
 }
 
 .main.login-main {
