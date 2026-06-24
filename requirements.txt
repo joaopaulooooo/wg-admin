@@ -1,0 +1,6 @@
+flask>=3.0,<4.0
+cryptography>=42.0
+argon2-cffi>=23.0
+qrcode>=7.0
+Pillow>=10.0
+itsdangerous>=2.1

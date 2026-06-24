@@ -1,0 +1,117 @@
+/* static/style.css */
+:root {
+  --bg: #fafafa;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --primary: #2563eb;
+  --border: #d4d4d8;
+  --danger: #dc2626;
+  --success: #16a34a;
+  --warn-bg: #fef3c7;
+  --error-bg: #fee2e2;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 2rem;
+  max-width: 1100px;
+  margin: 0 auto;
+  font-size: 14px;
+}
+
+h1 { font-size: 1.5rem; margin: 0 0 1.5rem; }
+
+form { margin: 1rem 0; }
+input[type=text], input[type=password], textarea {
+  display: block;
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 14px;
+  width: 100%;
+  max-width: 400px;
+}
+button, .btn {
+  background: var(--primary);
+  color: white;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button:hover { opacity: 0.9; }
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+th, td {
+  padding: 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+th { background: #f4f4f5; font-weight: 600; }
+tr.disabled td { opacity: 0.5; }
+tr.disabled em { color: var(--danger); }
+
+.flash {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+}
+.flash li {
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+.flash .error { background: var(--error-bg); }
+.flash .success { background: #dcfce7; color: var(--success); }
+
+.warn {
+  background: var(--warn-bg);
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin: 1rem 0;
+  border-left: 4px solid #d97706;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.topnav {
+  background: #f4f4f5;
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  margin: -2rem -2rem 1.5rem;
+}
+.topnav a, .topnav .link-btn {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  margin-right: 0.5rem;
+  color: var(--primary);
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.topnav a:hover, .topnav .link-btn:hover {
+  background: #e4e4e7;
+  text-decoration: none;
+}
+.topnav .link-btn {
+  font-family: inherit;
+}

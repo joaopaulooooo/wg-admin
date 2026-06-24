@@ -1,0 +1,10 @@
+[Unit]
+Description=wg-admin HTTP socket (socket activation)
+PartOf=wg-admin.service
+
+[Socket]
+ListenStream=51821
+Accept=no
+
+[Install]
+WantedBy=sockets.target

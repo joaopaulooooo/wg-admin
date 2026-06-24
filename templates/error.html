@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Erro {{ code }} — wg-admin{% endblock %}
+{% block content %}
+<h1>Erro {{ code }}</h1>
+<p>{{ message }}</p>
+<p><a href="/peers">Voltar aos peers</a></p>
+{% endblock %}

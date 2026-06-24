@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Novo peer — wg-admin{% endblock %}
+{% block content %}
+<h1>Novo peer</h1>
+
+<div class="warn">
+  ⚠️ Criar um peer vai reiniciar o wg-quick. Se estás neste momento a aceder ao painel via VPN, a tua conexão vai cair por ~1 segundo e o formulário pode parecer não responder. Espera uns segundos e volta a carregar a página.
+</div>
+
+<form method="post" action="/peers/new">
+  <label>Nome: <input type="text" name="name" required></label>
+  <label>Notas: <textarea name="notes"></textarea></label>
+  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+  <button type="submit" onclick="this.disabled=true; this.innerHTML='A criar…'; this.form.submit();">Criar</button>
+</form>
+<p><a href="/peers">Cancelar</a></p>
+{% endblock %}

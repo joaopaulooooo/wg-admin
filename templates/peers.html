@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Peers — wg-admin{% endblock %}
+{% block content %}
+<h1>Peers</h1>
+<p><a href="/peers/new">+ Novo peer</a></p>
+
+<div class="warn">
+  ⚠️ Criar, apagar ou toggle de peers reinicia o wg-quick — todos os peers ativos perdem conexão por ~1 segundo.
+</div>
+
+<table>
+<thead>
+<tr><th>Nome</th><th>IP</th><th>Estado</th><th>Último handshake</th><th>RX</th><th>TX</th><th>Ações</th></tr>
+</thead>
+<tbody>
+{% for peer in peers %}
+<tr class="{{ 'disabled' if peer.disabled else '' }}">
+  <td>
+    {{ peer.name }}
+    {% if peer.disabled %}<em>(inativo)</em>{% endif %}
+    {% if not peer.private_key_enc %}<em title="Chave privada não disponível — importado do wg0.conf">(importado)</em>{% endif %}
+  </td>
+  <td>{{ peer.ip }}</td>
+  <td>{{ "ativo" if not peer.disabled else "inativo" }}</td>
+  <td>{{ statuses.get(peer.public_key).latest_handshake if statuses.get(peer.public_key) else "—" }}</td>
+  <td>{{ statuses.get(peer.public_key).transfer_rx if statuses.get(peer.public_key) else "—" }}</td>
+  <td>{{ statuses.get(peer.public_key).transfer_tx if statuses.get(peer.public_key) else "—" }}</td>
+  <td>
+    {% if peer.private_key_enc %}
+    <a href="/peers/{{ peer.id }}/conf">.conf</a>
+    <a href="/peers/{{ peer.id }}/qr">QR</a>
+    {% else %}
+    <span title="Chave privada não disponível — clica em Editar para a colar">🔒</span>
+    {% endif %}
+    <a href="/peers/{{ peer.id }}/edit">Editar</a>
+    <form method="post" action="/peers/{{ peer.id }}/toggle" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <button type="submit" onclick="this.disabled=true; this.form.submit();">{{ "Ativar" if peer.disabled else "Desativar" }}</button>
+    </form>
+    <form method="post" action="/peers/{{ peer.id }}/delete" style="display:inline"
+          onsubmit="return confirm('Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.')">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <button type="submit">Apagar</button>
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}

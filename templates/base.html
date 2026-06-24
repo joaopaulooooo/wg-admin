@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}wg-admin{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{% if session.admin %}
+<nav class="topnav">
+  <a href="{{ url_for('peers_list') }}">Peers</a>
+  <a href="{{ url_for('change_password') }}">Mudar password</a>
+  <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+    <button type="submit" class="link-btn">Sair</button>
+  </form>
+</nav>
+{% endif %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<ul class="flash">
+{% for category, msg in messages %}
+<li class="{{ category }}">{{ msg }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endwith %}
+{% block content %}{% endblock %}
+</body>
+</html>

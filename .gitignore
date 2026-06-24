@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.coverage
+venv/
+*.tmp
+*.bak*
+*.lock
+secrets/
+state.json*
+config.ini

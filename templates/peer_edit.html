@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Editar peer — wg-admin{% endblock %}
+{% block content %}
+<h1>Editar peer</h1>
+<p>IP: {{ peer.ip }} · PublicKey: <code>{{ peer.public_key[:20] }}...</code></p>
+
+<form method="post" action="/peers/{{ peer.id }}/edit">
+  <label>Nome: <input type="text" name="name" value="{{ peer.name }}" required></label>
+  <label>Notas: <textarea name="notes">{{ peer.notes }}</textarea></label>
+
+  <details>
+    <summary>Chave privada (opcional)</summary>
+    {% if peer.private_key_enc %}
+    <p><em>Chave privada já presente.</em> Para a substituir, cola uma nova abaixo.</p>
+    {% else %}
+    <p><em>Sem chave privada.</em> Cola a chave privada deste peer (lê-la do dispositivo cliente) para permitir descarregar .conf e QR.</p>
+    {% endif %}
+    <label>PrivateKey (base64, 44 chars): <input type="text" name="private_key" placeholder="ex: yKD8x...=" style="font-family: monospace;"></label>
+  </details>
+
+  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+  <button type="submit" onclick="this.disabled=true; this.innerHTML='A guardar…'; this.form.submit();">Guardar</button>
+</form>
+<p><a href="/peers">Cancelar</a></p>
+{% endblock %}
