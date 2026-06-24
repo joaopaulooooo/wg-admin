@@ -30,8 +30,10 @@ WireGuard itself is **auto-installed if missing** — you don't need to set it u
 
 ## Install
 
+One-liner — clone and run:
+
 ```bash
-git clone https://github.com/<user>/wg-admin.git /tmp/wg-admin
+git clone https://github.com/joaopaulooooo/wg-admin.git /tmp/wg-admin
 sudo bash /tmp/wg-admin/install.sh
 ```
 
@@ -43,14 +45,37 @@ The install script is **idempotent** — safe to re-run. It will:
 4. Generate `master.key`, `session.key` (32 random bytes each)
 5. Prompt for admin password (Argon2id hashed)
 6. Ask for endpoint hostname and listen port
-7. **Detect existing Let's Encrypt cert** at `/etc/letsencrypt/live/<host>/` and configure TLS automatically
+7. **Detect existing Let's Encrypt cert** at `/etc/letsencrypt/live/<host>/` and configure TLS automatically (or print `certbot` instructions if missing)
 8. Auto-populate `server_public_key` in config.ini (derives from `wg pubkey`)
-9. Import existing peers from `/etc/wireguard/wg0.conf`
-10. **Create initial admin peer** if state ended up empty (so you can connect immediately)
-11. Install systemd units, enable + start service
+9. Import existing peers from `/etc/wireguard/wg0.conf` (if any)
+10. **Create initial admin peer** if state ended up empty — generates keypair, encrypts private key, adds to wg0.conf, restarts wg-quick (so you can connect immediately)
+11. Install systemd unit, enable + start service
 12. Open firewalld port if present
 
-Then visit `https://<host>:<port>/`.
+After install, visit `https://<host>:<port>/` and log in with the admin password you set.
+
+### What if I don't have a TLS cert yet?
+
+The install script detects existing Let's Encrypt certs automatically. If you don't have one, the script prints the exact `certbot` command to run afterwards:
+
+```bash
+sudo certbot certonly --standalone -d <your-host> \
+  --pre-hook "systemctl stop wg-admin.service" \
+  --post-hook "systemctl start wg-admin.service"
+```
+
+Then re-run `sudo bash /tmp/wg-admin/install.sh` — it will detect the new cert and wire it up.
+
+### Re-run / upgrade
+
+To update to a newer version of wg-admin:
+
+```bash
+cd /tmp/wg-admin && git pull
+sudo bash /tmp/wg-admin/install.sh
+```
+
+State, secrets, and config are preserved — only code and systemd units are updated.
 
 ## Uninstall
 
@@ -64,7 +89,7 @@ The uninstall does NOT touch `/etc/wireguard/wg0.conf` or Let's Encrypt certs �
 ## Development
 
 ```bash
-git clone <repo>
+git clone https://github.com/joaopaulooooo/wg-admin.git
 cd wg-admin
 python3 -m venv venv
 source venv/bin/activate
@@ -73,6 +98,8 @@ pytest
 ```
 
 103 tests, 91% coverage.
+
+CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
 ## Architecture
 
