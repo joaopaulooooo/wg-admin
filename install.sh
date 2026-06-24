@@ -551,41 +551,181 @@ if command -v firewall-cmd >/dev/null; then
   firewall-cmd --reload || true
 fi
 
+# --- WG port (para mostrar nas instruções finais) ---
+WG_PORT_CFG=$(grep -E '^listen_port|^endpoint_port' "$INSTALL_DIR/config.ini" | head -1 | cut -d= -f2 | tr -d ' ')
+# Tentar obter a porta WG do wg0.conf se disponível
+if [[ -f /etc/wireguard/wg0.conf ]]; then
+  WG_PORT_CFG=$(grep '^ListenPort' /etc/wireguard/wg0.conf | head -1 | cut -d= -f2 | tr -d ' ')
+fi
+
 # --- Final message ---
 cat <<EOF
 
-=================================================
-wg-admin installed.
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                       ║
+║                    ✅  wg-admin instalado com sucesso!                ║
+║                                                                       ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+EOF
+
+# ─── PASO 1: Abrir painel ───
+cat <<EOF
+━━━ 1. ABRIR O PAINEL WEB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 EOF
 
 if [[ -n "$CERT_PATH" ]]; then
   cat <<EOF
-TLS: using existing cert at $CERT_PATH
-Panel: https://$HOST:$PORT/
+  URL:  https://$HOST:$PORT/
+
+  Password: a que definiste durante a instalação.
+  Certificado TLS: já configurado (Let's Encrypt).
+
 EOF
 elif command -v certbot >/dev/null; then
   cat <<EOF
-TLS: no cert found — get one with:
-  certbot certonly --standalone -d $HOST \\
-    --pre-hook "systemctl stop wg-admin.service" \\
-    --post-hook "systemctl start wg-admin.service"
+  URL:  http://$HOST:$PORT/   (HTTP — sem HTTPS ainda)
 
-Then re-run install.sh to wire the cert, or edit /etc/systemd/system/wg-admin.service
-and add:
-  Environment=WG_ADMIN_CERT=/etc/letsencrypt/live/$HOST/fullchain.pem
-  Environment=WG_ADMIN_KEY=/etc/letsencrypt/live/$HOST/privkey.pem
-  sudo systemctl daemon-reload && sudo systemctl restart wg-admin.service
+  Para activar HTTPS mais tarde, corre:
+    sudo certbot certonly --standalone -d $HOST \\
+      --pre-hook "systemctl stop wg-admin.service" \\
+      --post-hook "systemctl start wg-admin.service"
 
-Panel (HTTP only for now): http://$HOST:$PORT/
+  Depois edita /etc/systemd/system/wg-admin.service e adiciona:
+    Environment=WG_ADMIN_CERT=/etc/letsencrypt/live/$HOST/fullchain.pem
+    Environment=WG_ADMIN_KEY=/etc/letsencrypt/live/$HOST/privkey.pem
+  E reinicia: sudo systemctl daemon-reload && sudo systemctl restart wg-admin.service
+
 EOF
 else
   cat <<EOF
-TLS: certbot not installed — install with: apt install certbot
-Panel (HTTP only): http://$HOST:$PORT/
+  URL:  http://$HOST:$PORT/   (HTTP — sem HTTPS ainda)
+
+  Para HTTPS: instala o certbot primeiro (sudo apt install certbot),
+  depois re-corre este install para ele gerar o certificado.
+
 EOF
 fi
 
+# ─── PASO 2: Firewalls ───
 cat <<EOF
-=================================================
+━━━ 2. ABRIR PORTAS NO FIREWALL DA CLOUD/ROTER ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  O teu servidor está atrás de firewalls adicionais que NÃO são controlados
+  por este script. Precisas de abrir as portas manualmente:
+
+  🟢 Porta UDP $WG_PORT_CFG  →  WireGuard (para os peers conectarem)
+  🟢 Porta TCP $PORT          →  Painel web (para acederes de um browser)
+EOF
+
+# Detectar provider para dar instruções específicas
+if curl -s --max-time 2 http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null | head -c 2 | grep -q "i-"; then
+  cat <<EOF
+  ** Estás na AWS EC2 **
+  → Vai a: https://console.aws.amazon.com/ec2/ → Instances → seleciona a instância
+    → Aba "Security" → click no Security Group → "Edit inbound rules"
+    → Adiciona 2 regras:
+      Type: Custom UDP, Port: $WG_PORT_CFG, Source: 0.0.0.0/0
+      Type: Custom TCP, Port: $PORT, Source: 0.0.0.0/0
+    → Save rules
+
+  💡 Recomendação: usa Elastic IP para IP fixo (grátis enquanto associado):
+    https://console.aws.amazon.com/vpc/ → Elastic IPs → Allocate
+EOF
+elif curl -s --max-time 2 http://169.254.169.254/metadata/v1/ 2>/dev/null | grep -q "."; then
+  cat <<EOF
+  ** Estás na DigitalOcean **
+  → Networking → Firewalls → selecciona o firewall da droplet → Inbound Rules
+  → Adiciona:
+    Custom UDP, Port $WG_PORT_CFG, All IPv4
+    Custom TCP, Port $PORT, All IPv4
+EOF
+elif curl -s --max-time 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/id 2>/dev/null | grep -q "."; then
+  cat <<EOF
+  ** Estás no Google Cloud **
+  → VPC Network → Firewall → Create Firewall Rule (×2):
+    1) allow-wg:   UDP $WG_PORT_CFG, source 0.0.0.0/0
+    2) allow-panel: TCP $PORT,        source 0.0.0.0/0
+EOF
+else
+  cat <<EOF
+  ** Servidor caseiro / VPS genérico **
+  → Se tiveres router à frente, faz port-forwarding das portas acima
+    para o IP local deste servidor.
+  • ufw no servidor: já abri UDP $WG_PORT_CFG e TCP $PORT automaticamente.
+EOF
+fi
+
+# ─── PASO 3: Endpoint ───
+if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  cat <<EOF
+━━━ 3. ⚠️  AVISO: ENDPOINT POR IP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Configuraste o endpoint como IP ($HOST). Se o teu IP público mudar
+  (reinícios de router, ISP renovar DHCP), os peers vão perder conexão.
+
+  Para resolver se IP for dinâmico:
+
+  ▸ Serviços gratuitos de DDNS:
+    - https://duckdns.org  (mais simples, 30 seg a configurar)
+    - https://no-ip.com
+    - https://dynv6.com
+
+  ▸ Passos típicos:
+    1. Cria conta num dos serviços acima
+    2. Escolhe um hostname (ex: minhavpn.duckdns.org)
+    3. Aponta-o para o teu IP actual
+    4. Instala o cliente DDNS no servidor para manter actualizado:
+         sudo apt install ddclient
+       (ou corre cron com curl a cada hora)
+    5. Re-corre: sudo bash /tmp/wg-admin/install.sh
+       Quando pedir endpoint, cola o hostname novo
+
+EOF
+fi
+
+# ─── PASO 4: Conectar primeiro peer ───
+cat <<EOF
+━━━ 4. LIGAR-TE À VPN (primeiro peer) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Foi criado um peer "admin" automático durante a instalação.
+  Para o importar num dispositivo:
+
+  Opção A — App móvel (iOS/Android, app oficial WireGuard):
+    1. Abre https://$HOST:$PORT/ no browser
+    2. Faz login
+    3. Clica em "QR" ao lado do peer "admin"
+    4. Na app WireGuard → + → "Scan from QR code"
+
+  Opção B — Computador (Linux/Mac/Windows):
+    1. Faz download do ficheiro .conf (clica ".conf" no painel)
+    2. Importa no cliente WireGuard:
+       • Linux:   nmcli connection import type wireguard file admin.conf
+       • Windows: "Import tunnel(s) from file" no app
+       • macOS:   arrasta o .conf para a app
+
+  Depois de ligares, confirma com:
+    sudo wg show
+
+EOF
+
+# ─── Comandos úteis ───
+cat <<EOF
+━━━ COMANDOS ÚTEIS PARA O DIA-A-DIA ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Ver estado do painel:      sudo systemctl status wg-admin.service
+  Reiniciar painel:          sudo systemctl restart wg-admin.service
+  Ver logs do painel:        sudo journalctl -u wg-admin.service -f
+  Ver peers WireGuard ativos: sudo wg show
+  Ver IP público do servidor: curl https://api.ipify.org
+
+  Reinstalar/Actualizar:      cd /tmp/wg-admin && git pull && sudo bash install.sh
+  Desinstalar:                sudo bash /wg-admin/uninstall.sh
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✨ Documentação completa:  https://github.com/joaopaulooooo/wg-admin
+  ✨ Issues / dúvidas:       https://github.com/joaopaulooooo/wg-admin/issues
+
 EOF
