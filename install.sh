@@ -636,7 +636,10 @@ if [[ -f /etc/systemd/system/wg-admin.socket ]]; then
 fi
 
 systemctl daemon-reload
-systemctl enable --now wg-admin.service
+# Always restart, never just 'enable --now' — if service was already running
+# with old env vars (e.g. TLS paths added on re-run), those wouldn't take effect.
+systemctl enable wg-admin.service
+systemctl restart wg-admin.service
 
 # --- firewalld ---
 if command -v firewall-cmd >/dev/null; then
