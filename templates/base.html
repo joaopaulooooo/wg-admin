@@ -22,7 +22,7 @@
   </div>
 
   <nav class="sidebar-nav">
-    <a href="{{ url_for('peers_list') }}" class="sidebar-link {{ 'active' if request.endpoint == 'peers_list' or request.endpoint == 'peer_new' or request.endpoint == 'peer_edit' }}">
+    <a href="{{ url_for('peers_list') }}" class="sidebar-link {{ 'active' if request.endpoint in ('peers_list', 'peer_new', 'peer_edit') }}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       <span>Peers</span>
     </a>
@@ -45,11 +45,12 @@
     </form>
   </div>
 </aside>
+{% endif %}
 
-<main class="main">
+<main class="main {{ 'login-main' if not session.admin }}">
   {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
-  <ul class="flash">
+  <ul class="flash {{ 'flash-center' if not session.admin }}">
   {% for category, msg in messages %}
     <li class="{{ category }}">{{ msg }}</li>
   {% endfor %}
@@ -59,20 +60,7 @@
 
   {% block content %}{% endblock %}
 </main>
-
-{% else %}
-{# Login page — no sidebar #}
-{% with messages = get_flashed_messages(with_categories=true) %}
-{% if messages %}
-<ul class="flash flash-center">
-{% for category, msg in messages %}
-  <li class="{{ category }}">{{ msg }}</li>
-{% endfor %}
-</ul>
-{% endif %}
-{% endwith %}
-{% block content %}{% endblock %}
-{% endif %}
 </body>
 </html>
+
 
