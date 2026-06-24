@@ -100,24 +100,73 @@ ensure_wg0_conf() {
   info ""
   info "Não encontrei /etc/wireguard/wg0.conf — vou criar configuração inicial"
   info ""
-  read -r -p "Subnet [10.0.0.0/24]: " SUBNET
-  SUBNET=${SUBNET:-10.0.0.0/24}
+
+  # --- Escolha de subnet (3 opções pré-definidas) ---
+  echo ">>> Escolhe a subnet para a VPN (faixa de IPs virtuais):"
+  echo "     1) 10.0.0.0/24      → range 10.0.0.1   a 10.0.0.254   (recomendado)"
+  echo "     2) 10.66.66.0/24    → range 10.66.66.1 a 10.66.66.254 (clássico p/ VPN)"
+  echo "     3) 192.168.99.0/24  → range 192.168.99.1 a 192.168.99.254"
+  echo "     4) Outra (escrever à mão)"
+  read -r -p "Opção [1]: " SUBNET_OPT
+  SUBNET_OPT=${SUBNET_OPT:-1}
+  case "$SUBNET_OPT" in
+    1) SUBNET="10.0.0.0/24"; DEFAULT_IP="10.0.0.1" ;;
+    2) SUBNET="10.66.66.0/24"; DEFAULT_IP="10.66.66.1" ;;
+    3) SUBNET="192.168.99.0/24"; DEFAULT_IP="192.168.99.1" ;;
+    4)
+       while true; do
+         read -r -p "Subnet (CIDR, ex: 10.5.0.0/24): " SUBNET
+         if python3 -c "import ipaddress,sys; ipaddress.ip_network('$SUBNET', strict=False)" 2>/dev/null; then
+           break
+         fi
+         info "Subnet inválida. Tenta outra vez (ex: 10.5.0.0/24)."
+       done
+       DEFAULT_IP=$(python3 -c "
+import ipaddress
+net = ipaddress.ip_network('$SUBNET', strict=False)
+print(str(list(net.hosts())[0]))
+")
+       ;;
+    *) err "Opção inválida" ;;
+  esac
+
+  # --- Server IP (com validação e range visualizado) ---
+  FIRST_IP=$(python3 -c "import ipaddress; n=ipaddress.ip_network('$SUBNET',strict=False); print(str(list(n.hosts())[0]))")
+  LAST_IP=$(python3 -c "import ipaddress; n=ipaddress.ip_network('$SUBNET',strict=False); print(str(list(n.hosts())[-1]))")
+  info ""
+  info "IPs disponíveis para o servidor na subnet $SUBNET: $FIRST_IP a $LAST_IP"
+  info "Recomendado: $DEFAULT_IP (primeiro IP — fica como gateway do VPN)"
 
   while true; do
-    read -r -p "Server IP na subnet [10.0.0.1]: " SERVER_IP
-    SERVER_IP=${SERVER_IP:-10.0.0.1}
+    read -r -p "Server IP [$DEFAULT_IP]: " SERVER_IP
+    SERVER_IP=${SERVER_IP:-$DEFAULT_IP}
     if [[ "$(ip_in_subnet "$SERVER_IP" "$SUBNET")" == "OK" ]]; then
       break
     fi
-    info "ERRO: $SERVER_IP não pertence a $SUBNET. Tenta outra vez."
+    info "ERRO: $SERVER_IP não pertence a $SUBNET (válido: $FIRST_IP a $LAST_IP). Tenta outra vez."
   done
 
-  read -r -p "Listen port UDP [51820]: " WG_PORT
-  WG_PORT=${WG_PORT:-51820}
+  # --- Porta UDP WireGuard ---
+  echo ""
+  echo ">>> Porta UDP onde o WireGuard vai ouvir (tem de estar aberta no router/security group):"
+  echo "     1) 51820 (padrão WireGuard, recomendado)"
+  echo "     2) 51821"
+  echo "     3) 443 (disfarça-se de HTTPS, útil em redes restritas)"
+  echo "     4) Outra (escrever à mão)"
+  read -r -p "Opção [1]: " PORT_OPT
+  PORT_OPT=${PORT_OPT:-1}
+  case "$PORT_OPT" in
+    1) WG_PORT="51820" ;;
+    2) WG_PORT="51821" ;;
+    3) WG_PORT="443" ;;
+    4) read -r -p "Porta UDP: " WG_PORT ;;
+    *) err "Opção inválida" ;;
+  esac
 
   # Descobrir interface de rede default para NAT
   DEFAULT_IF=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
   DEFAULT_IF=${DEFAULT_IF:-eth0}
+  info ""
   info "Interface para NAT (default route): $DEFAULT_IF"
 
   # Prefix da subnet
@@ -228,10 +277,38 @@ fi
 
 # --- config.ini ---
 if [[ ! -f "$INSTALL_DIR/config.ini" ]]; then
-  info "Configuring"
-  read -r -p "Endpoint hostname (e.g. vpn.example.com): " ENDPOINT
-  read -r -p "Listen port [51821]: " LISTEN_PORT
-  LISTEN_PORT=${LISTEN_PORT:-51821}
+  info ""
+  info "Configuração do painel web"
+  info ""
+
+  # Tentar detetar IP público para sugerir
+  PUBLIC_IP=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null || echo "")
+  if [[ -n "$PUBLIC_IP" ]]; then
+    info "Detetei IP público: $PUBLIC_IP"
+    info "Para o painel ser acessível de fora, usa este IP ou um domínio a apontar para ele."
+    info ""
+  fi
+
+  read -r -p "Endpoint hostname ou IP (ex: vpn.example.com ou $PUBLIC_IP): " ENDPOINT
+  ENDPOINT=${ENDPOINT:-$PUBLIC_IP}
+  [[ -n "$ENDPOINT" ]] || err "Endpoint é obrigatório"
+
+  echo ""
+  echo ">>> Porta TCP para o painel web (HTTPS):"
+  echo "     1) 51821 (recomendado — perto do WG, fácil de lembrar)"
+  echo "     2) 8443 (alternativa comum para HTTPS)"
+  echo "     3) 443 (HTTPS standard — pode entrar em conflito com outros serviços)"
+  echo "     4) Outra (escrever à mão)"
+  read -r -p "Opção [1]: " LISTEN_OPT
+  LISTEN_OPT=${LISTEN_OPT:-1}
+  case "$LISTEN_OPT" in
+    1) LISTEN_PORT="51821" ;;
+    2) LISTEN_PORT="8443" ;;
+    3) LISTEN_PORT="443" ;;
+    4) read -r -p "Porta TCP: " LISTEN_PORT ;;
+    *) err "Opção inválida" ;;
+  esac
+
   cp "$INSTALL_DIR/config.ini.example" "$INSTALL_DIR/config.ini"
   sed -i "s/^endpoint_host = .*/endpoint_host = $ENDPOINT/" "$INSTALL_DIR/config.ini"
   sed -i "s/^listen_port = .*/listen_port = $LISTEN_PORT/" "$INSTALL_DIR/config.ini"
