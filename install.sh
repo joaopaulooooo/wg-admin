@@ -18,6 +18,14 @@ if ! command -v python3 >/dev/null; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv python3-pip
 fi
 
+# Ensure python3-venv is available (missing on fresh Ubuntu 24.04/25.04 even if python3 is present)
+if ! python3 -c "import ensurepip" 2>/dev/null; then
+  info "python3-venv/ensurepip em falta — a instalar"
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip || \
+    err "Não consegui instalar python3-venv. Instala manualmente: apt install python3-venv"
+fi
+
 PYVER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 [[ "$(printf "%s\n%s" "$PYTHON_MIN_VERSION" "$PYVER" | sort -V | head -1)" == "$PYTHON_MIN_VERSION" ]] \
   || err "Python >= $PYTHON_MIN_VERSION required (have $PYVER)"
@@ -71,6 +79,20 @@ ensure_wireguard() {
   info "WireGuard instalado com sucesso"
 }
 
+# Validate that an IP belongs to a subnet (CIDR notation)
+ip_in_subnet() {
+  local ip="$1" subnet="$2"
+  python3 -c "
+import sys, ipaddress
+try:
+    net = ipaddress.ip_network('$subnet', strict=False)
+    addr = ipaddress.ip_address('$ip')
+    print('OK' if addr in net else 'FAIL')
+except ValueError as e:
+    print('FAIL')
+"
+}
+
 ensure_wg0_conf() {
   if [[ -f /etc/wireguard/wg0.conf ]]; then
     return
@@ -80,8 +102,16 @@ ensure_wg0_conf() {
   info ""
   read -r -p "Subnet [10.0.0.0/24]: " SUBNET
   SUBNET=${SUBNET:-10.0.0.0/24}
-  read -r -p "Server IP na subnet [10.0.0.1]: " SERVER_IP
-  SERVER_IP=${SERVER_IP:-10.0.0.1}
+
+  while true; do
+    read -r -p "Server IP na subnet [10.0.0.1]: " SERVER_IP
+    SERVER_IP=${SERVER_IP:-10.0.0.1}
+    if [[ "$(ip_in_subnet "$SERVER_IP" "$SUBNET")" == "OK" ]]; then
+      break
+    fi
+    info "ERRO: $SERVER_IP não pertence a $SUBNET. Tenta outra vez."
+  done
+
   read -r -p "Listen port UDP [51820]: " WG_PORT
   WG_PORT=${WG_PORT:-51820}
 
@@ -110,12 +140,12 @@ PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACC
 EOF
   chmod 600 /etc/wireguard/wg0.conf
 
-  # Ativar IP forwarding
+  # Ativar IP forwarding (persistent via /etc/sysctl.d/ — works on Ubuntu 25.04 too)
   info "A ativar IP forwarding"
   sysctl -w net.ipv4.ip_forward=1 >/dev/null
-  if ! grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf; then
-    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
-  fi
+  mkdir -p /etc/sysctl.d
+  echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-wg-admin.conf
+  sysctl --system >/dev/null 2>&1 || true
 
   # Abrir porta UDP
   if command -v firewall-cmd >/dev/null; then
