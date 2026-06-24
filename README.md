@@ -113,6 +113,7 @@ uninstall.sh      # Cleanup with optional state backup
 - [Design spec](docs/superpowers/specs/2026-06-17-wg-admin-design.md)
 - [Implementation plan](docs/superpowers/plans/2026-06-17-wg-admin-implementation.md)
 - [Smoke test checklist](docs/smoke-test.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Limitations
 
