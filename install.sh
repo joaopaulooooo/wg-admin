@@ -500,24 +500,71 @@ PYEOF
   fi
 fi
 
-# --- TLS cert detection ---
+# --- TLS setup: existing cert → certbot → self-signed ---
 HOST=$(grep '^endpoint_host' "$INSTALL_DIR/config.ini" | cut -d= -f2 | tr -d ' ')
 PORT=$(grep '^listen_port' "$INSTALL_DIR/config.ini" | cut -d= -f2 | tr -d ' ')
 
-CERT_DIR="/etc/letsencrypt/live/$HOST"
 CERT_PATH=""
 KEY_PATH=""
+TLS_TYPE=""
 
+CERT_DIR="/etc/letsencrypt/live/$HOST"
 if [[ -d "$CERT_DIR" && -r "$CERT_DIR/fullchain.pem" && -r "$CERT_DIR/privkey.pem" ]]; then
-  info "Found existing Let's Encrypt cert for $HOST — using it for TLS"
+  info "Cert Let's Encrypt já existe para $HOST — vou usar"
   CERT_PATH="$CERT_DIR/fullchain.pem"
   KEY_PATH="$CERT_DIR/privkey.pem"
-else
-  info "No existing cert at $CERT_DIR — checking other options"
-  # Try Apache's default cert path
-  if [[ -d /etc/apache2 ]] && apache2ctl -S 2>/dev/null | grep -q "$HOST"; then
-    info "Apache vhost for $HOST found — recommend using Apache reverse proxy"
+  TLS_TYPE="letsencrypt"
+elif [[ ! "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  # Hostname (não IP) → pode pedir cert Let's Encrypt
+  info "A instalar certbot para obter certificado Let's Encrypt"
+  detect_distro > /dev/null
+  DISTRO=$(detect_distro)
+  case "$DISTRO" in
+    debian) apt-get install -y certbot ;;
+    rhel) dnf install -y certbot ;;
+    arch) pacman -Sy --noconfirm certbot ;;
+    alpine) apk add --no-cache certbot ;;
+  esac
+
+  # Stop wg-admin se já estiver a correr (para libertar porta se for 80/443)
+  systemctl stop wg-admin.service 2>/dev/null || true
+
+  info "A pedir certificado a Let's Encrypt para $HOST..."
+  if certbot certonly --standalone \
+       --non-interactive \
+       --agree-tos \
+       --register-unsafely-without-email \
+       -d "$HOST" 2>&1 | tail -10; then
+    CERT_PATH="/etc/letsencrypt/live/$HOST/fullchain.pem"
+    KEY_PATH="/etc/letsencrypt/live/$HOST/privkey.pem"
+    TLS_TYPE="letsencrypt"
+    info "Certificado Let's Encrypt obtido com sucesso!"
+  else
+    info "certbot falhou — vou gerar self-signed como fallback"
   fi
+fi
+
+# Self-signed fallback (para IP ou certbot falhado)
+if [[ -z "$CERT_PATH" ]]; then
+  info "A gerar certificado self-signed (válido 365 dias)"
+  mkdir -p /etc/wg-admin
+  if [[ "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+      -keyout /etc/wg-admin/selfsigned.key \
+      -out /etc/wg-admin/selfsigned.crt \
+      -subj "/CN=$HOST" \
+      -addext "subjectAltName=IP:$HOST" 2>/dev/null
+  else
+    openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+      -keyout /etc/wg-admin/selfsigned.key \
+      -out /etc/wg-admin/selfsigned.crt \
+      -subj "/CN=$HOST" \
+      -addext "subjectAltName=DNS:$HOST" 2>/dev/null
+  fi
+  chmod 600 /etc/wg-admin/selfsigned.key
+  CERT_PATH="/etc/wg-admin/selfsigned.crt"
+  KEY_PATH="/etc/wg-admin/selfsigned.key"
+  TLS_TYPE="self-signed"
 fi
 
 # --- run.py: entry point that reads TLS from env ---
@@ -622,35 +669,39 @@ cat <<EOF
 
 EOF
 
-if [[ -n "$CERT_PATH" ]]; then
+if [[ "$TLS_TYPE" == "letsencrypt" ]]; then
   cat <<EOF
   URL:  https://$HOST:$PORT/
 
   Password: a que definiste durante a instalação.
-  Certificado TLS: já configurado (Let's Encrypt).
+  Certificado TLS: Let's Encrypt válido (browser mostra cadeado verde ✅).
 
 EOF
-elif command -v certbot >/dev/null; then
+elif [[ "$TLS_TYPE" == "self-signed" ]]; then
   cat <<EOF
-  URL:  http://$HOST:$PORT/   (HTTP — sem HTTPS ainda)
+  URL:  https://$HOST:$PORT/
 
-  Para activar HTTPS mais tarde, corre:
-    sudo certbot certonly --standalone -d $HOST \\
-      --pre-hook "systemctl stop wg-admin.service" \\
-      --post-hook "systemctl start wg-admin.service"
+  Password: a que definiste durante a instalação.
+  Certificado TLS: self-signed (gerado automaticamente).
 
-  Depois edita /etc/systemd/system/wg-admin.service e adiciona:
-    Environment=WG_ADMIN_CERT=/etc/letsencrypt/live/$HOST/fullchain.pem
-    Environment=WG_ADMIN_KEY=/etc/letsencrypt/live/$HOST/privkey.pem
-  E reinicia: sudo systemctl daemon-reload && sudo systemctl restart wg-admin.service
+  ⚠️  O browser vai mostrar aviso "não seguro" porque o certificado
+     não é de uma entidade reconhecida (Let's Encrypt).
+     É normal — podes clicar "Advanced → Proceed to site" para avançar.
+     Tudo encriptado, só não é reconhecido pelo browser.
+
+  Para ter certificado reconhecido (sem aviso):
+    • Associa um domínio ao servidor (ex: vpn.example.com)
+    • Re-corre: sudo bash /tmp/wg-admin/install.sh
+    • Quando pedir endpoint, cola o domínio
+    • Vai pedir cert Let's Encrypt automaticamente
 
 EOF
 else
   cat <<EOF
-  URL:  http://$HOST:$PORT/   (HTTP — sem HTTPS ainda)
+  URL:  http://$HOST:$PORT/   (HTTP — sem HTTPS)
 
-  Para HTTPS: instala o certbot primeiro (sudo apt install certbot),
-  depois re-corre este install para ele gerar o certificado.
+  Para HTTPS: corre sudo bash /tmp/wg-admin/install.sh outra vez
+  (vai instalar certbot + gerar certificado automaticamente).
 
 EOF
 fi
