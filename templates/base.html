@@ -2,28 +2,40 @@
 <html lang="pt">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}wg-admin{% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='5' fill='%23dc2626'/><text x='12' y='17' font-family='monospace' font-size='14' font-weight='bold' fill='white' text-anchor='middle'>wg</text></svg>">
 </head>
 <body>
 {% if session.admin %}
 <nav class="topnav">
-  <a href="{{ url_for('peers_list') }}">Peers</a>
-  <a href="{{ url_for('change_password') }}">Mudar password</a>
-  <form method="post" action="{{ url_for('logout') }}" style="display:inline">
-    <button type="submit" class="link-btn">Sair</button>
-  </form>
+  <a href="{{ url_for('peers_list') }}" class="brand">
+    <span class="brand-mark">wg</span>
+    <span class="brand-text">wg<span class="accent">-</span>admin</span>
+  </a>
+  <div class="topnav-links">
+    <a href="{{ url_for('peers_list') }}">Peers</a>
+    <a href="{{ url_for('change_password') }}">Password</a>
+    <form method="post" action="{{ url_for('logout') }}">
+      <button type="submit" class="link-btn logout">Sair</button>
+    </form>
+  </div>
 </nav>
 {% endif %}
+
 {% with messages = get_flashed_messages(with_categories=true) %}
 {% if messages %}
-<ul class="flash">
-{% for category, msg in messages %}
-<li class="{{ category }}">{{ msg }}</li>
-{% endfor %}
-</ul>
+<div class="container">
+  <ul class="flash">
+  {% for category, msg in messages %}
+    <li class="{{ category }}">{{ msg }}</li>
+  {% endfor %}
+  </ul>
+</div>
 {% endif %}
 {% endwith %}
+
 {% block content %}{% endblock %}
 </body>
 </html>

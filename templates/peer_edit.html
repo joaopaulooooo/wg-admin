@@ -1,25 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Editar peer — wg-admin{% endblock %}
 {% block content %}
-<h1>Editar peer</h1>
-<p>IP: {{ peer.ip }} · PublicKey: <code>{{ peer.public_key[:20] }}...</code></p>
+<div class="container">
+  <h1><span class="accent-bar"></span>Editar peer</h1>
+  <p class="subtitle">// {{ peer.ip }} · <span class="mono">{{ peer.public_key[:20] }}…</span></p>
 
-<form method="post" action="/peers/{{ peer.id }}/edit">
-  <label>Nome: <input type="text" name="name" value="{{ peer.name }}" required></label>
-  <label>Notas: <textarea name="notes">{{ peer.notes }}</textarea></label>
+  <form method="post" action="{{ url_for('peer_edit', peer_id=peer.id) }}">
+    <label for="name">NOME</label>
+    <input type="text" id="name" name="name" value="{{ peer.name }}" required>
 
-  <details>
-    <summary>Chave privada (opcional)</summary>
-    {% if peer.private_key_enc %}
-    <p><em>Chave privada já presente.</em> Para a substituir, cola uma nova abaixo.</p>
-    {% else %}
-    <p><em>Sem chave privada.</em> Cola a chave privada deste peer (lê-la do dispositivo cliente) para permitir descarregar .conf e QR.</p>
-    {% endif %}
-    <label>PrivateKey (base64, 44 chars): <input type="text" name="private_key" placeholder="ex: yKD8x...=" style="font-family: monospace;"></label>
-  </details>
+    <label for="notes">NOTAS</label>
+    <textarea id="notes" name="notes">{{ peer.notes }}</textarea>
 
-  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-  <button type="submit" onclick="this.disabled=true; this.innerHTML='A guardar…'; this.form.submit();">Guardar</button>
-</form>
-<p><a href="/peers">Cancelar</a></p>
+    <details>
+      <summary>Chave privada (opcional)</summary>
+      {% if peer.private_key_enc %}
+      <p><em>Chave privada já presente.</em> Para a substituir, cola uma nova abaixo.</p>
+      {% else %}
+      <p><em>Sem chave privada.</em> Cola a chave privada deste peer (lê-la do dispositivo cliente) para permitir descarregar .conf e QR.</p>
+      {% endif %}
+      <label for="private_key">PRIVATE KEY (base64, 44 chars)</label>
+      <input type="text" id="private_key" name="private_key" placeholder="ex: yKD8x...=" style="font-family: var(--font-mono); font-size: 0.8rem;">
+    </details>
+
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+      <button type="submit" onclick="this.disabled=true; this.innerHTML='A guardar…'; this.form.submit();">Guardar</button>
+      <a href="{{ url_for('peers_list') }}" class="btn secondary">Cancelar</a>
+    </div>
+  </form>
+</div>
 {% endblock %}

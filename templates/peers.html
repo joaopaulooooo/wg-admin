@@ -1,50 +1,96 @@
 {% extends "base.html" %}
 {% block title %}Peers — wg-admin{% endblock %}
 {% block content %}
-<h1>Peers</h1>
-<p><a href="/peers/new">+ Novo peer</a></p>
+<div class="container">
+  <h1><span class="accent-bar"></span>Peers</h1>
+  <p class="subtitle">// {{ peers|length }} total · {{ statuses|length }} ativos</p>
 
-<div class="warn">
-  ⚠️ Criar, apagar ou toggle de peers reinicia o wg-quick — todos os peers ativos perdem conexão por ~1 segundo.
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-label">Total Peers</span>
+      <span class="stat-value">{{ peers|length }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Conectados</span>
+      <span class="stat-value {% if statuses|length > 0 %}active{% endif %}">{{ statuses|length }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Importados</span>
+      <span class="stat-value">{% set imported = peers | selectattr('private_key_enc', 'equalto', '') | list %}{{ imported|length }}</span>
+    </div>
+  </div>
+
+  <div class="warn">
+    ⚠️ Criar, apagar ou alternar peers reinicia o wg-quick — todos os peers ativos perdem conexão por ~1 segundo.
+  </div>
+
+  <div class="action-bar">
+    <a href="{{ url_for('peer_new') }}" class="btn">+ Novo peer</a>
+  </div>
+
+  {% if peers %}
+  <div class="peer-grid">
+    {% for peer in peers %}
+    {% set status = statuses.get(peer.public_key) %}
+    <div class="peer-card {{ 'disabled' if peer.disabled else '' }}">
+      <div class="peer-card-header">
+        <h3 class="peer-name">
+          {{ peer.name }}
+          {% if peer.disabled %}<em>(inativo)</em>{% endif %}
+          {% if not peer.private_key_enc %}<em title="Chave privada não disponível — importado do wg0.conf">🔒</em>{% endif %}
+        </h3>
+        <span class="peer-status {{ 'inactive' if peer.disabled or not status else '' }}">
+          {% if peer.disabled %}inativo{% elif status %}online{% else %}offline{% endif %}
+        </span>
+      </div>
+
+      <dl class="peer-meta">
+        <dt>IP</dt>
+        <dd>{{ peer.ip }}</dd>
+
+        {% if status and status.latest_handshake %}
+        <dt>handshake</dt>
+        <dd>{{ status.latest_handshake }}</dd>
+        {% endif %}
+
+        {% if status and status.transfer_rx %}
+        <dt>rx</dt>
+        <dd>{{ status.transfer_rx }} bytes</dd>
+        {% endif %}
+
+        {% if status and status.transfer_tx %}
+        <dt>tx</dt>
+        <dd>{{ status.transfer_tx }} bytes</dd>
+        {% endif %}
+
+        {% if not peer.private_key_enc %}
+        <dt>chave</dt>
+        <dd class="text-muted">sem privada</dd>
+        {% endif %}
+      </dl>
+
+      <div class="peer-actions">
+        {% if peer.private_key_enc %}
+        <a href="{{ url_for('peer_conf', peer_id=peer.id) }}" class="btn secondary">.conf</a>
+        <a href="{{ url_for('peer_qr', peer_id=peer.id) }}" class="btn secondary">QR</a>
+        {% endif %}
+        <a href="{{ url_for('peer_edit', peer_id=peer.id) }}" class="btn secondary">Editar</a>
+        <form method="post" action="{{ url_for('peer_toggle', peer_id=peer.id) }}">
+          <button type="submit" class="secondary">{{ "Ativar" if peer.disabled else "Desativar" }}</button>
+        </form>
+        <form method="post" action="{{ url_for('peer_delete', peer_id=peer.id) }}"
+              onsubmit="return confirm('Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.')">
+          <button type="submit" class="danger">Apagar</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">
+    <p>Sem peers configurados.</p>
+    <p><a href="{{ url_for('peer_new') }}" class="btn">+ Criar primeiro peer</a></p>
+  </div>
+  {% endif %}
 </div>
-
-<table>
-<thead>
-<tr><th>Nome</th><th>IP</th><th>Estado</th><th>Último handshake</th><th>RX</th><th>TX</th><th>Ações</th></tr>
-</thead>
-<tbody>
-{% for peer in peers %}
-<tr class="{{ 'disabled' if peer.disabled else '' }}">
-  <td>
-    {{ peer.name }}
-    {% if peer.disabled %}<em>(inativo)</em>{% endif %}
-    {% if not peer.private_key_enc %}<em title="Chave privada não disponível — importado do wg0.conf">(importado)</em>{% endif %}
-  </td>
-  <td>{{ peer.ip }}</td>
-  <td>{{ "ativo" if not peer.disabled else "inativo" }}</td>
-  <td>{{ statuses.get(peer.public_key).latest_handshake if statuses.get(peer.public_key) else "—" }}</td>
-  <td>{{ statuses.get(peer.public_key).transfer_rx if statuses.get(peer.public_key) else "—" }}</td>
-  <td>{{ statuses.get(peer.public_key).transfer_tx if statuses.get(peer.public_key) else "—" }}</td>
-  <td>
-    {% if peer.private_key_enc %}
-    <a href="/peers/{{ peer.id }}/conf">.conf</a>
-    <a href="/peers/{{ peer.id }}/qr">QR</a>
-    {% else %}
-    <span title="Chave privada não disponível — clica em Editar para a colar">🔒</span>
-    {% endif %}
-    <a href="/peers/{{ peer.id }}/edit">Editar</a>
-    <form method="post" action="/peers/{{ peer.id }}/toggle" style="display:inline">
-      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-      <button type="submit" onclick="this.disabled=true; this.form.submit();">{{ "Ativar" if peer.disabled else "Desativar" }}</button>
-    </form>
-    <form method="post" action="/peers/{{ peer.id }}/delete" style="display:inline"
-          onsubmit="return confirm('Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.')">
-      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-      <button type="submit">Apagar</button>
-    </form>
-  </td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
 {% endblock %}

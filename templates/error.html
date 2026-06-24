@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Erro {{ code }} — wg-admin{% endblock %}
 {% block content %}
-<h1>Erro {{ code }}</h1>
-<p>{{ message }}</p>
-<p><a href="/peers">Voltar aos peers</a></p>
+<div class="container">
+  <div class="error-page">
+    <p class="error-code">{{ code }}</p>
+    <p class="error-message">{{ message }}</p>
+    <a href="{{ url_for('peers_list') }}" class="btn">← Voltar aos peers</a>
+  </div>
+</div>
 {% endblock %}
