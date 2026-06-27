@@ -234,3 +234,44 @@ def test_wg_quick_restart_calls_systemctl(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     wg.wg_quick_restart("wg0")
     assert calls[0] == ["systemctl", "restart", "wg-quick@wg0"]
+
+
+# Modern wg show dump format (9 fields per peer, with PSK column)
+WG_SHOW_DUMP_MODERN = "\n".join([
+    "wg0\tSERVER_PRIV=\tSERVER_PUB=\t51820\toff",
+    "wg0\tOvY3EwyTvRoeR6jPDx3dbUyhpnOSV2SaAJY86V77FzQ=\t(none)\t89.152.203.206:56996\t10.66.66.2/32\t1718642000\t1900544\t6972928\t0",
+    "wg0\tRFSVIEkXbjlHGp+W0+FbPe3VAH5g7n5NoHOs1pk7P2Y=\tabcd=\t(none)\t10.66.66.3/32\t0\t0\t0\t0",
+])
+
+
+def test_parse_modern_format_9_fields():
+    """Modern wg show dump has PSK field between pubkey and endpoint."""
+    peers = wg.parse_wg_show_dump(WG_SHOW_DUMP_MODERN, "wg0")
+    assert len(peers) == 2
+    p0 = peers[0]
+    assert p0.public_key == "OvY3EwyTvRoeR6jPDx3dbUyhpnOSV2SaAJY86V77FzQ="
+    assert p0.endpoint == "89.152.203.206:56996"
+    assert p0.allowed_ips == ["10.66.66.2/32"]
+    assert p0.latest_handshake == 1718642000
+    assert p0.transfer_rx == 1900544
+    assert p0.transfer_tx == 6972928
+
+
+def test_parse_modern_format_disconnected_peer():
+    """Modern format with '(none)' endpoint and psk field present."""
+    peers = wg.parse_wg_show_dump(WG_SHOW_DUMP_MODERN, "wg0")
+    p1 = peers[1]
+    assert p1.public_key == "RFSVIEkXbjlHGp+W0+FbPe3VAH5g7n5NoHOs1pk7P2Y="
+    assert p1.endpoint is None  # was "(none)"
+    assert p1.latest_handshake == 0
+
+
+def test_parse_does_not_treat_psk_as_pubkey():
+    """Critical regression: old parser used parts[2] as endpoint but in modern
+    format that's the PSK field. Make sure PSK never becomes public_key."""
+    peers = wg.parse_wg_show_dump(WG_SHOW_DUMP_MODERN, "wg0")
+    for p in peers:
+        assert p.public_key != "(none)"
+        assert p.public_key != "abcd="
+        assert "=" in p.public_key  # all pubkeys end with =
+        assert len(p.public_key) == 44  # base64 32 bytes

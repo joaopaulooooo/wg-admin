@@ -120,26 +120,65 @@ class PeerStatus:
 
 
 def parse_wg_show_dump(output: str, interface: str = "wg0") -> List[PeerStatus]:
-    """Parse `wg show <interface> dump` output. Skips the interface header line."""
+    """Parse `wg show <interface> dump` output.
+
+    Real format (per `man wg`):
+      Interface line: ifname  privkey  pubkey  listenport  fwmark         (5 fields)
+      Peer line:      ifname  pubkey  psk  endpoint  allowed-ips  handshake  rx  tx  keepalive  (9 fields)
+
+    Older/legacy format (some wg versions):
+      Peer line:      ifname  pubkey  endpoint  allowed-ips  handshake  rx  tx  keepalive  (8 fields)
+
+    This parser auto-detects field count and indexes accordingly.
+    """
     peers: List[PeerStatus] = []
     for line in output.strip().split("\n"):
         if not line:
             continue
         parts = line.split("\t")
+        # Peer line has 8 (legacy) or 9 (modern with PSK) fields. Interface has 5-6.
         if len(parts) < 8:
             continue
-        third = parts[2]
-        # Peer line: 3rd field is endpoint (host:port or "(none)")
-        # Interface line: 3rd field is the interface name or short pubkey
-        if ":" in third or third == "(none)":
-            peers.append(PeerStatus(
-                public_key=parts[1],
-                endpoint=third if third != "(none)" else None,
-                allowed_ips=parts[3].split(",") if parts[3] else [],
-                latest_handshake=int(parts[4]) if parts[4] else 0,
-                transfer_rx=int(parts[5]) if parts[5] else 0,
-                transfer_tx=int(parts[6]) if parts[6] else 0,
-            ))
+        # Modern format: parts[2] is PSK, parts[3] is endpoint
+        # Legacy format:  parts[2] is endpoint
+        if len(parts) >= 9:
+            pubkey = parts[1]
+            endpoint = parts[3] if parts[3] != "(none)" else None
+            allowed_ips_field = parts[4]
+            handshake_field = parts[5]
+            rx_field = parts[6]
+            tx_field = parts[7]
+        else:
+            # 8 fields, legacy
+            pubkey = parts[1]
+            endpoint = parts[2] if parts[2] != "(none)" else None
+            allowed_ips_field = parts[3]
+            handshake_field = parts[4]
+            rx_field = parts[5]
+            tx_field = parts[6]
+
+        # Skip interface line that might have leaked through (pubkey contains "="
+        # but parts[1] of interface line is private key, also "=" — check handshake
+        # is a number to confirm it's a peer line)
+        try:
+            latest_handshake = int(handshake_field) if handshake_field else 0
+        except ValueError:
+            continue  # not a peer line
+
+        try:
+            transfer_rx = int(rx_field) if rx_field else 0
+            transfer_tx = int(tx_field) if tx_field else 0
+        except ValueError:
+            continue
+
+        peers.append(PeerStatus(
+            public_key=pubkey,
+            endpoint=endpoint,
+            allowed_ips=allowed_ips_field.split(",") if allowed_ips_field else [],
+            latest_handshake=latest_handshake,
+            transfer_rx=transfer_rx,
+            transfer_tx=transfer_tx,
+        ))
     return peers
 
 
