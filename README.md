@@ -3,8 +3,8 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-116-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-161-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
 ## Features
@@ -120,7 +120,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-116 tests, 91% coverage.
+161 tests, 89% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -128,22 +128,25 @@ CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — 
 
 ```
 src/wg_admin/
-├── app.py        # Flask factory, routes, auth, CSRF, rate limit, change-password
-├── bandwidth.py  # 5-min periodic sampler, daily buckets, 30-day retention
-├── config.py     # Load config.ini with defaults
+├── app.py        # Flask factory, routes, auth, CSRF, rate limit, change-password, context processor
+├── bandwidth.py  # 5-min periodic sampler, daily buckets, 30-day retention, quota check
+├── config.py     # Load config.ini with defaults (incl. [quota] section)
 ├── crypto.py     # HKDF-SHA256, AES-256-GCM, Argon2id
-├── state.py      # Encrypted state load/save, schema, IP allocation, per-peer key encryption
-├── wg.py         # Subprocess wrappers + parser (auto-detects dump format)
+├── quota.py      # Per-peer and global quota checks (rolling 30-day)
+├── state.py      # Encrypted state load/save, schema migration, IP allocation, per-peer key encryption
+├── wg.py         # Subprocess wrappers + parser, apply_state_to_wg, wg_syncconf, wg_interface_active
 ├── confgen.py    # .conf + QR code generation
 └── ratelimit.py  # File-based IP throttling
 
 templates/        # Jinja2: base, login, peers, peer_form, peer_edit, change_password, error
-static/           # NOC-at-night CSS
+static/           # NOC-at-night CSS (style.css)
+static/js/        # bandwidth-modal, whatsapp-modal, global-chart
+static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 116 tests, integration smoke test
-docs/             # spec, plan, smoke test checklist
+tests/            # 161 tests, integration smoke test
+docs/             # specs, plans, smoke test checklist
 .github/          # CI workflow, issue/PR templates
 ```
 
@@ -158,12 +161,15 @@ docs/             # spec, plan, smoke test checklist
 - Sampled every 5 min via systemd timer
 - Cumulative totals that survive counter resets (wg-quick restarts, reboots)
 - Daily buckets pruned after 30 days
+- After each sample, runs quota check — peers exceeding their `quota_gb` (rolling 30-day) are auto-suspended; reactivated when usage drops below
 
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
-- [Design spec](docs/superpowers/specs/2026-06-17-wg-admin-design.md)
-- [Implementation plan](docs/superpowers/plans/2026-06-17-wg-admin-implementation.md)
+- [v0.1.0 design spec](docs/superpowers/specs/2026-06-17-wg-admin-design.md)
+- [v0.1.0 implementation plan](docs/superpowers/plans/2026-06-17-wg-admin-implementation.md)
+- [Quotas/graphs/syncconf/WhatsApp design](docs/superpowers/specs/2026-06-27-quota-graphs-syncconf-whatsapp-design.md)
+- [Quotas/graphs/syncconf/WhatsApp plan](docs/superpowers/plans/2026-06-27-quota-graphs-syncconf-whatsapp.md)
 - [Smoke test checklist](docs/smoke-test.md)
 - [Contributing](CONTRIBUTING.md)
 
