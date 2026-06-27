@@ -11,13 +11,14 @@ from flask import (
     session, url_for,
 )
 
-from . import confgen, config, crypto, ratelimit, state, wg
+from . import bandwidth, confgen, config, crypto, ratelimit, state, wg
 
 # These paths are patched in tests via monkeypatch.
 SECRETS_DIR = Path("/wg-admin/secrets")
 STATE_PATH = Path("/wg-admin/state.json.enc")
 CONFIG_PATH = Path("/wg-admin/config.ini")
 RATELIMIT_PATH = Path("/wg-admin/secrets/auth_ratelimit.json")
+BANDWIDTH_PATH = Path("/wg-admin/bandwidth.json")
 
 
 def _apply_state_to_wg(s: dict, cfg) -> None:
@@ -174,10 +175,27 @@ def create_app() -> Flask:
             statuses_by_key = {st.public_key: st for st in statuses}
         except Exception:
             app.logger.warning("wg show failed", exc_info=True)
+
+        # Load bandwidth data and compute per-peer stats
+        bw = bandwidth.load_bandwidth(BANDWIDTH_PATH)
+        bandwidth_stats = {}
+        for peer in s["peers"]:
+            stats = bandwidth.get_peer_stats(bw, peer.get("public_key", ""))
+            bandwidth_stats[peer["id"]] = {
+                "total_rx": bandwidth.format_bytes(stats["total_rx"]),
+                "total_tx": bandwidth.format_bytes(stats["total_tx"]),
+                "thirty_day_rx": bandwidth.format_bytes(stats["thirty_day_rx"]),
+                "thirty_day_tx": bandwidth.format_bytes(stats["thirty_day_tx"]),
+                "thirty_day_rx_raw": stats["thirty_day_rx"],
+                "thirty_day_tx_raw": stats["thirty_day_tx"],
+                "first_seen": stats["first_seen"],
+            }
+
         return render_template(
             "peers.html",
             peers=s["peers"],
             statuses=statuses_by_key,
+            bandwidth=bandwidth_stats,
         )
 
     @app.route("/peers/new", methods=["GET", "POST"])

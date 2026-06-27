@@ -1,0 +1,13 @@
+[Unit]
+Description=Run wg-admin bandwidth sampler every 5 minutes
+Requires=wg-admin-bandwidth.service
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=wg-admin-bandwidth.service
+
+[Install]
+WantedBy=timers.target

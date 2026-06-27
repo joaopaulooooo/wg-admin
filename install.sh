@@ -716,6 +716,18 @@ systemctl daemon-reload
 systemctl enable wg-admin.service
 systemctl restart wg-admin.service
 
+# --- Bandwidth tracker systemd timer (5 min samples) ---
+info "Installing bandwidth tracker timer"
+cp "$INSTALL_DIR/systemd/wg-admin-bandwidth.service" /etc/systemd/system/
+cp "$INSTALL_DIR/systemd/wg-admin-bandwidth.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now wg-admin-bandwidth.timer
+
+# Run first sample right now so data exists immediately
+info "Running initial bandwidth sample"
+systemctl start wg-admin-bandwidth.service 2>/dev/null || \
+  "$INSTALL_DIR/venv/bin/python" -m wg_admin.bandwidth track /wg-admin/bandwidth.json 2>/dev/null || true
+
 # --- firewalld ---
 if command -v firewall-cmd >/dev/null; then
   info "Opening firewalld"

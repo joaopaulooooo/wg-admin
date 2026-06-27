@@ -1,0 +1,17 @@
+[Unit]
+Description=wg-admin bandwidth sampler (one-shot)
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/wg-admin
+Environment=PYTHONPATH=/wg-admin/src
+ExecStart=/wg-admin/venv/bin/python -m wg_admin.bandwidth track /wg-admin/bandwidth.json
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/wg-admin
+NoNewPrivileges=yes
+PrivateTmp=yes

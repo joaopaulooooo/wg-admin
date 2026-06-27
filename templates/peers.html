@@ -53,14 +53,13 @@
         <dd>{{ status.latest_handshake }}</dd>
         {% endif %}
 
-        {% if status and status.transfer_rx %}
-        <dt>rx</dt>
-        <dd>{{ status.transfer_rx }} bytes</dd>
-        {% endif %}
+        {% set bw = bandwidth.get(peer.id) %}
+        {% if bw %}
+        <dt>30 dias</dt>
+        <dd>↓ {{ bw.thirty_day_rx }} · ↑ {{ bw.thirty_day_tx }}</dd>
 
-        {% if status and status.transfer_tx %}
-        <dt>tx</dt>
-        <dd>{{ status.transfer_tx }} bytes</dd>
+        <dt>total</dt>
+        <dd>↓ {{ bw.total_rx }} · ↑ {{ bw.total_tx }}</dd>
         {% endif %}
 
         {% if not peer.private_key_enc %}
