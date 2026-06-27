@@ -20,10 +20,6 @@
     </div>
   </div>
 
-  <div class="warn">
-    ⚠️ Criar, apagar ou alternar peers reinicia o wg-quick — todos os peers ativos perdem conexão por ~1 segundo.
-  </div>
-
   <div class="action-bar">
     <a href="{{ url_for('peer_new') }}" class="btn">+ Novo peer</a>
   </div>
@@ -42,7 +38,7 @@
           {% if not peer.private_key_enc %}<em title="Chave privada não disponível — importado do wg0.conf">🔒</em>{% endif %}
         </h3>
         <span class="peer-status {{ 'inactive' if peer.disabled or not pv.is_online else '' }}">
-          {% if peer.disabled %}inativo{% elif pv.is_online %}online{% elif status %}configurado{% else %}offline{% endif %}
+          {% if peer.disabled %}inativo{% elif pv.is_online %}online{% else %}offline{% endif %}
         </span>
       </div>
 
