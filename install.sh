@@ -238,6 +238,41 @@ for cmd in wg wg-quick systemctl; do
   command -v "$cmd" >/dev/null || err "$cmd not found"
 done
 
+# --- Garantir que SSH (22/tcp) está permitido se firewall estiver ativo ---
+# Não activamos firewalls, mas se já estiverem ativos garantimos que não trancamos fora.
+ensure_ssh_allowed() {
+  # ufw
+  if command -v ufw >/dev/null; then
+    if ufw status 2>/dev/null | grep -q "Status: active"; then
+      # Verificar se porta 22/tcp já está allow
+      if ! ufw status 2>/dev/null | grep -E "(^|[^0-9])22(/tcp)?(\s|$)" | grep -qi "ALLOW"; then
+        info "ufw ativo sem regra para SSH — a abrir 22/tcp (prevenção)"
+        ufw allow 22/tcp || true
+      else
+        info "✓ ufw já permite SSH"
+      fi
+    fi
+  fi
+
+  # firewalld (sempre ativo quando instalado)
+  if command -v firewall-cmd >/dev/null; then
+    if firewall-cmd --state 2>/dev/null | grep -q "running"; then
+      SSH_OK=0
+      firewall-cmd --list-services 2>/dev/null | grep -qw ssh && SSH_OK=1
+      firewall-cmd --list-ports 2>/dev/null | grep -qw "22/tcp" && SSH_OK=1
+      if [[ "$SSH_OK" -ne 1 ]]; then
+        info "firewalld ativo sem regra para SSH — a abrir serviço ssh (prevenção)"
+        firewall-cmd --add-service=ssh --permanent || true
+        firewall-cmd --reload || true
+      else
+        info "✓ firewalld já permite SSH"
+      fi
+    fi
+  fi
+}
+
+ensure_ssh_allowed
+
 # --- Directories ---
 info "Creating $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"/{secrets,templates,static,systemd}
