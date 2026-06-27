@@ -176,26 +176,49 @@ def create_app() -> Flask:
         except Exception:
             app.logger.warning("wg show failed", exc_info=True)
 
-        # Load bandwidth data and compute per-peer stats
+        # Compute is_online + bandwidth per peer, pass as peer_views list
+        import time as _time
+        now_ts = int(_time.time())
+        ONLINE_WINDOW = 180  # WireGuard re-handshake interval
+
         bw = bandwidth.load_bandwidth(BANDWIDTH_PATH)
-        bandwidth_stats = {}
+        peer_views = []
+        connected_count = 0
         for peer in s["peers"]:
-            stats = bandwidth.get_peer_stats(bw, peer.get("public_key", ""))
-            bandwidth_stats[peer["id"]] = {
-                "total_rx": bandwidth.format_bytes(stats["total_rx"]),
-                "total_tx": bandwidth.format_bytes(stats["total_tx"]),
-                "thirty_day_rx": bandwidth.format_bytes(stats["thirty_day_rx"]),
-                "thirty_day_tx": bandwidth.format_bytes(stats["thirty_day_tx"]),
-                "thirty_day_rx_raw": stats["thirty_day_rx"],
-                "thirty_day_tx_raw": stats["thirty_day_tx"],
-                "first_seen": stats["first_seen"],
-            }
+            pub = peer.get("public_key", "")
+            status = statuses_by_key.get(pub)
+            is_online = bool(
+                status
+                and status.latest_handshake
+                and status.latest_handshake > now_ts - ONLINE_WINDOW
+            )
+            if is_online:
+                connected_count += 1
+            if not status and pub:
+                app.logger.info(
+                    "peer %r (%s) not matched in wg show (have: %s)",
+                    peer.get("name"), pub, list(statuses_by_key.keys())
+                )
+            bw_stats = bandwidth.get_peer_stats(bw, pub)
+            peer_views.append({
+                "peer": peer,
+                "status": status,
+                "is_online": is_online,
+                "bandwidth": {
+                    "total_rx": bandwidth.format_bytes(bw_stats["total_rx"]),
+                    "total_tx": bandwidth.format_bytes(bw_stats["total_tx"]),
+                    "thirty_day_rx": bandwidth.format_bytes(bw_stats["thirty_day_rx"]),
+                    "thirty_day_tx": bandwidth.format_bytes(bw_stats["thirty_day_tx"]),
+                    "first_seen": bw_stats["first_seen"],
+                },
+            })
 
         return render_template(
             "peers.html",
-            peers=s["peers"],
-            statuses=statuses_by_key,
-            bandwidth=bandwidth_stats,
+            peer_views=peer_views,
+            connected_count=connected_count,
+            total_peers=len(s["peers"]),
+            imported_count=sum(1 for p in s["peers"] if not p.get("private_key_enc")),
         )
 
     @app.route("/peers/new", methods=["GET", "POST"])

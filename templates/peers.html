@@ -3,31 +3,20 @@
 {% block content %}
 <div class="container">
   <h1><span class="accent-bar"></span>Peers</h1>
-  <p class="subtitle">// {{ peers|length }} total · {{ statuses|length }} ativos</p>
-
-  {% set now_ts = namespace(value=0) %}
-  {% set connected_count = namespace(value=0) %}
-  {% for peer in peers %}
-    {% if not peer.disabled %}
-      {% set st = statuses.get(peer.public_key) %}
-      {% if st and st.latest_handshake and st.latest_handshake > (now() | int) - 180 %}
-        {% set connected_count.value = connected_count.value + 1 %}
-      {% endif %}
-    {% endif %}
-  {% endfor %}
+  <p class="subtitle">// {{ total_peers }} total · {{ connected_count }} ativos</p>
 
   <div class="stats">
     <div class="stat">
       <span class="stat-label">Total Peers</span>
-      <span class="stat-value">{{ peers|length }}</span>
+      <span class="stat-value">{{ total_peers }}</span>
     </div>
     <div class="stat">
       <span class="stat-label">Conectados agora</span>
-      <span class="stat-value {% if connected_count.value > 0 %}active{% endif %}">{{ connected_count.value }}</span>
+      <span class="stat-value {% if connected_count > 0 %}active{% endif %}">{{ connected_count }}</span>
     </div>
     <div class="stat">
       <span class="stat-label">Importados</span>
-      <span class="stat-value">{% set imported = peers | selectattr('private_key_enc', 'equalto', '') | list %}{{ imported|length }}</span>
+      <span class="stat-value">{{ imported_count }}</span>
     </div>
   </div>
 
@@ -39,11 +28,12 @@
     <a href="{{ url_for('peer_new') }}" class="btn">+ Novo peer</a>
   </div>
 
-  {% if peers %}
+  {% if peer_views %}
   <div class="peer-grid">
-    {% for peer in peers %}
-    {% set status = statuses.get(peer.public_key) %}
-    {% set is_online = status and status.latest_handshake and status.latest_handshake > (now() | int) - 180 %}
+    {% for pv in peer_views %}
+    {% set peer = pv.peer %}
+    {% set status = pv.status %}
+    {% set bw = pv.bandwidth %}
     <div class="peer-card {{ 'disabled' if peer.disabled else '' }}">
       <div class="peer-card-header">
         <h3 class="peer-name">
@@ -51,8 +41,8 @@
           {% if peer.disabled %}<em>(inativo)</em>{% endif %}
           {% if not peer.private_key_enc %}<em title="Chave privada não disponível — importado do wg0.conf">🔒</em>{% endif %}
         </h3>
-        <span class="peer-status {{ 'inactive' if peer.disabled or not is_online else '' }}">
-          {% if peer.disabled %}inativo{% elif is_online %}online{% elif status %}configurado{% else %}offline{% endif %}
+        <span class="peer-status {{ 'inactive' if peer.disabled or not pv.is_online else '' }}">
+          {% if peer.disabled %}inativo{% elif pv.is_online %}online{% elif status %}configurado{% else %}offline{% endif %}
         </span>
       </div>
 
@@ -70,14 +60,11 @@
         <dd>{{ status.latest_handshake }}</dd>
         {% endif %}
 
-        {% set bw = bandwidth.get(peer.id) %}
-        {% if bw %}
         <dt>30 dias</dt>
         <dd>↓ {{ bw.thirty_day_rx }} · ↑ {{ bw.thirty_day_tx }}</dd>
 
         <dt>total</dt>
         <dd>↓ {{ bw.total_rx }} · ↑ {{ bw.total_tx }}</dd>
-        {% endif %}
 
         {% if not peer.private_key_enc %}
         <dt>chave</dt>
@@ -183,7 +170,6 @@
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
 
-    // Focus the close button for keyboard users
     setTimeout(() => modal.querySelector('.modal-close').focus(), 50);
   }
 
@@ -192,7 +178,6 @@
     modal.setAttribute('aria-hidden', 'true');
     document.body.style.overflow = '';
     if (lastFocused) lastFocused.focus();
-    // Clear src after fade-out to avoid showing stale image
     setTimeout(() => { img.src = ''; }, 250);
   }
 
@@ -215,7 +200,6 @@
     }
   });
 
-  // Close if click directly on backdrop (not inside card)
   modal.querySelector('.modal-backdrop').addEventListener('click', close);
 })();
 </script>
