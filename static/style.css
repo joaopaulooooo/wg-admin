@@ -191,7 +191,7 @@ body {
   align-items: center;
   font-family: var(--font-mono);
   font-size: 0.7rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
 .sidebar-meta .meta-label {
@@ -200,6 +200,34 @@ body {
 
 .sidebar-meta .meta-value {
   color: var(--text-secondary);
+}
+
+.sidebar-github {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+
+.sidebar-github:hover {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.04);
+  border-color: var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.sidebar-github svg {
+  opacity: 0.8;
 }
 
 .sidebar-logout {
