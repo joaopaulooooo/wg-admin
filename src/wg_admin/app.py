@@ -195,9 +195,9 @@ def create_app() -> Flask:
             if is_online:
                 connected_count += 1
             if not status and pub:
-                app.logger.info(
-                    "peer %r (%s) not matched in wg show (have: %s)",
-                    peer.get("name"), pub, list(statuses_by_key.keys())
+                app.logger.warning(
+                    "peer %r not matched in wg show. state pubkey=%r (len=%d). wg show keys=%s",
+                    peer.get("name"), pub, len(pub), [f"{k!r}(len={len(k)})" for k in statuses_by_key.keys()]
                 )
             bw_stats = bandwidth.get_peer_stats(bw, pub)
             peer_views.append({
