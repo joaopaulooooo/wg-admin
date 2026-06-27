@@ -15,9 +15,16 @@ Minimal WireGuard peer management panel for Linux servers. Python + Flask + syst
 - **Live status**: online/offline badge with pulsing green dot based on handshake recency
 - **Per-peer bandwidth tracking**: 30-day and total stats, auto-sampled every 5 min
 
-### Downloads
+### Downloads & sharing
 - **`.conf` file** with full WireGuard config
 - **QR code** opens in elegant modal — scan with WireGuard mobile app
+- **WhatsApp share** — modal asks for client phone, sends .conf as attachment via Web Share API (mobile) or download+chat (desktop)
+
+### Quotas & monitoring
+- **Per-peer quotas**: set GB limit per peer; auto-suspend on 30-day rolling overage
+- **Global quota**: warning banner when total exceeds limit
+- **VPN kill switch**: stop/start the entire VPN from the sidebar
+- **Live charts**: sparkline per card, modal per peer, global stacked chart at top of /peers
 
 ### Security
 - **Single admin password** (Argon2id, m=16MB/t=3/p=1)
@@ -164,7 +171,7 @@ docs/             # spec, plan, smoke test checklist
 
 - **Single admin**: no multi-user, no audit trail between users
 - **Imported peers from existing `wg0.conf` cannot download `.conf`/QR**: their private keys only exist on client devices. Panel shows 🔒 marker; paste private key later via "Editar" if available
-- **`wg-quick restart` on every mutation** (create/delete/toggle) — all active peers briefly disconnect (~1s). UI warns about this only on the create form
+- **`wg-quick restart` on delete/toggle only** — create uses `wg syncconf` for zero-downtime. Delete and toggle still cause ~1s disconnect (required to clean PostUp/iptables rules).
 - **No 2FA**: if password is compromised, attacker has full panel access
 
 ## License

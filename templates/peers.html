@@ -5,6 +5,13 @@
   <h1><span class="accent-bar"></span>Peers</h1>
   <p class="subtitle">// {{ total_peers }} total · {{ connected_count }} ativos</p>
 
+  {% if global_exceeded %}
+  <div class="banner banner-danger">
+    ⚠ Cota global excedida — {{ global_used_gb|round(1) }} / {{ global_quota_gb|int }} GB · 30d.
+    Considera desativar a VPN no sidebar ou reduzir cotas individuais.
+  </div>
+  {% endif %}
+
   <div class="stats">
     <div class="stat">
       <span class="stat-label">Total Peers</span>
@@ -25,6 +32,12 @@
   </div>
 
   {% if peer_views %}
+  {# Global bandwidth chart #}
+  <section class="global-chart">
+    <h3><span class="accent-bar"></span>Tráfego 30d — todos os peers</h3>
+    <canvas id="global-chart" width="1200" height="200"></canvas>
+  </section>
+
   <div class="peer-grid">
     {% for pv in peer_views %}
     {% set peer = pv.peer %}
@@ -78,6 +91,32 @@
         {% endif %}
       </dl>
 
+      {# Sparkline + quota bar #}
+      {% if pv.sparkline %}
+      <div class="peer-sparkline"
+           data-peer-id="{{ peer.id }}"
+           data-peer-name="{{ peer.name }}"
+           role="button"
+           tabindex="0"
+           title="Clica para ver detalhes">
+        <svg viewBox="0 0 80 24" width="80" height="24">
+          <path d="{{ pv.sparkline }}" fill="none"
+                stroke="var(--accent)" stroke-width="1.5"/>
+        </svg>
+      </div>
+      {% endif %}
+
+      {% if pv.quota_gb and pv.quota_gb > 0 %}
+      <div class="quota-bar" title="{{ pv.used_30d_gb|round(2) }} / {{ pv.quota_gb }} GB (30d)">
+        <div class="quota-fill quota-{{ pv.quota_class }}"
+             style="width: {{ pv.quota_pct }}%"></div>
+        <span class="quota-text">{{ pv.used_30d_gb|round(1) }} / {{ pv.quota_gb }} GB</span>
+      </div>
+      {% if peer.quota_suspended %}
+      <span class="badge badge-danger">SUSPENSO</span>
+      {% endif %}
+      {% endif %}
+
       <div class="peer-actions">
         {% if peer.private_key_enc %}
         <a href="{{ url_for('peer_conf', peer_id=peer.id) }}" class="btn secondary">.conf</a>
@@ -87,6 +126,15 @@
            data-qr-url="{{ url_for('peer_qr', peer_id=peer.id) }}"
            data-conf-url="{{ url_for('peer_conf', peer_id=peer.id) }}">
           QR
+        </a>
+        <a href="#" class="btn secondary wa-trigger"
+           data-peer-id="{{ peer.id }}"
+           data-peer-name="{{ peer.name }}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17.5 14.4c-.3-.1-1.7-.9-2-1-.3-.1-.5-.1-.7.1-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-1.8-.9-3-1.6-4.2-3.6-.3-.5.3-.5.9-1.6.1-.2 0-.4 0-.5-.1-.2-.7-1.7-1-2.3-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5 4.5 1.9.8 2.6.9 3.5.8.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.4-.1-.2-.3-.2-.6-.4z"/>
+            <path d="M12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.5.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2zm0 18.3c-1.5 0-3-.4-4.3-1.2l-.3-.2-3.1.8.8-3-.2-.3c-.9-1.4-1.3-2.9-1.3-4.5C3.6 7.3 7.3 3.6 12 3.6s8.4 3.7 8.4 8.4-3.7 8.3-8.4 8.3z"/>
+          </svg>
+          WhatsApp
         </a>
         {% endif %}
         <a href="{{ url_for('peer_edit', peer_id=peer.id) }}" class="btn secondary">Editar</a>
@@ -209,4 +257,78 @@
   modal.querySelector('.modal-backdrop').addEventListener('click', close);
 })();
 </script>
+
+{# ─── Bandwidth Modal ─── #}
+<div class="modal" id="bw-modal" aria-hidden="true" role="dialog" aria-labelledby="bw-modal-title">
+  <div class="modal-backdrop" data-modal-close></div>
+  <div class="modal-card">
+    <button class="modal-close" data-modal-close aria-label="Fechar">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+
+    <h2 id="bw-modal-title" class="modal-title">
+      Bandwidth — <span class="peer-name"></span>
+    </h2>
+
+    <canvas id="bw-chart" width="600" height="300"></canvas>
+
+    <div class="modal-actions">
+      <button data-modal-close class="btn">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='vendor/chartjs.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/bandwidth-modal.js') }}"></script>
+
+{# ─── WhatsApp Modal ─── #}
+<div class="modal" id="wa-modal" aria-hidden="true" role="dialog" aria-labelledby="wa-modal-title">
+  <div class="modal-backdrop" data-modal-close></div>
+  <div class="modal-card">
+    <button class="modal-close" data-modal-close aria-label="Fechar">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+
+    <h2 id="wa-modal-title" class="modal-title">
+      Partilhar via WhatsApp — <span class="peer-name"></span>
+    </h2>
+
+    <label for="wa-ddi">DDI (código do país)</label>
+    <select id="wa-ddi">
+      <option value="351">🇵🇹 +351 (PT)</option>
+      <option value="55">🇧🇷 +55 (BR)</option>
+      <option value="34">🇪🇸 +34 (ES)</option>
+      <option value="33">🇫🇷 +33 (FR)</option>
+      <option value="1">🇺🇸 +1 (US)</option>
+      <option value="">Outro (escreve DDI+número abaixo)</option>
+    </select>
+
+    <label for="wa-phone">NÚMERO</label>
+    <input type="tel" id="wa-phone" placeholder="912 345 678" autocomplete="off">
+
+    <p class="hint">
+      Se DDI = "Outro", escreve DDI+número juntos (ex: <code>44 7700 900123</code>).
+      Caso contrário, só o número sem DDI. Apenas dígitos.
+    </p>
+
+    <details>
+      <summary>Pré-visualizar mensagem</summary>
+      <pre class="wa-preview" style="white-space: pre-wrap; font-size: 0.75rem; max-height: 200px; overflow: auto;"></pre>
+    </details>
+
+    <div class="modal-actions">
+      <button id="wa-send" class="btn" disabled>Abrir WhatsApp</button>
+      <button data-modal-close class="btn secondary">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/whatsapp-modal.js') }}"></script>
+<script src="{{ url_for('static', filename='js/global-chart.js') }}"></script>
 {% endblock %}

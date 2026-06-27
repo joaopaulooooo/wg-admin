@@ -107,8 +107,10 @@ def test_save_then_load_preserves_data(tmp_path):
     master = bytes(32)
     s = state.empty_state()
     s["peers"] = [
-        {"id": "abc12345", "name": "x", "ip": "10.0.0.2"},
-        {"id": "def67890", "name": "y", "ip": "10.0.0.3"},
+        {"id": "abc12345", "name": "x", "ip": "10.0.0.2",
+         "quota_gb": 0.0, "quota_suspended": False, "quota_state_updated_at": None},
+        {"id": "def67890", "name": "y", "ip": "10.0.0.3",
+         "quota_gb": 0.0, "quota_suspended": False, "quota_state_updated_at": None},
     ]
     state.save_state(state_path, s, master)
     loaded = state.load_state(state_path, master)
@@ -205,3 +207,44 @@ def test_encrypt_private_key_different_each_call():
     blob1 = state.encrypt_private_key("X=", master)
     blob2 = state.encrypt_private_key("X=", master)
     assert blob1 != blob2  # different nonces
+
+
+def test_migrate_state_adds_quota_fields_to_old_peer():
+    """Peers created before quotas existed should get default fields."""
+    from wg_admin.state import migrate_state
+    state = {
+        "version": 1,
+        "peers": [{
+            "id": "abc", "name": "x", "public_key": "PUB",
+            "private_key_enc": "ENC", "ip": "10.0.0.2",
+            "disabled": False, "created_at": "2026-06-17T00:00:00Z",
+        }],
+    }
+    migrate_state(state)
+    p = state["peers"][0]
+    assert p["quota_gb"] == 0.0
+    assert p["quota_suspended"] is False
+    assert p["quota_state_updated_at"] is None
+
+
+def test_migrate_state_preserves_existing_quota_fields():
+    from wg_admin.state import migrate_state
+    state = {"version": 1, "peers": [{
+        "id": "abc", "name": "x", "public_key": "PUB",
+        "private_key_enc": "ENC", "ip": "10.0.0.2",
+        "disabled": False, "created_at": "...",
+        "quota_gb": 5.5, "quota_suspended": True,
+        "quota_state_updated_at": "2026-06-27T00:00:00Z",
+    }]}
+    migrate_state(state)
+    p = state["peers"][0]
+    assert p["quota_gb"] == 5.5
+    assert p["quota_suspended"] is True
+    assert p["quota_state_updated_at"] == "2026-06-27T00:00:00Z"
+
+
+def test_migrate_state_handles_empty_peers():
+    from wg_admin.state import migrate_state
+    state = {"version": 1, "peers": []}
+    migrate_state(state)  # should not raise
+    assert state["peers"] == []

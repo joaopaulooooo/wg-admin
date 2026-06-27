@@ -61,3 +61,16 @@ def test_allowed_ips_list_parsed_correctly(tmp_path):
     cfg = config.load_config(p)
     ips = config.get_allowed_ips_list(cfg)
     assert ips == ["0.0.0.0/0"]
+
+
+def test_load_has_quota_section_default(tmp_path):
+    cfg = config.load_config(tmp_path / "nonexistent.ini")
+    assert cfg["quota"]["global_quota_gb"] == "0"
+    assert cfg["quota"].getfloat("global_quota_gb") == 0.0
+
+
+def test_load_quota_section_overridden_by_file(tmp_path):
+    p = tmp_path / "config.ini"
+    p.write_text("[quota]\nglobal_quota_gb = 250\n")
+    cfg = config.load_config(p)
+    assert cfg["quota"].getfloat("global_quota_gb") == 250.0

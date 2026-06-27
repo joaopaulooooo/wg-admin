@@ -21,6 +21,9 @@ DEFAULTS = {
         "listen_port": "51821",
         "session_lifetime_seconds": "3600",
     },
+    "quota": {
+        "global_quota_gb": "0",  # 0 = unlimited
+    },
 }
 
 

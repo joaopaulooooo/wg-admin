@@ -42,6 +42,18 @@ def find_peer_by_id(state_data: dict, peer_id: str) -> Optional[dict]:
     return None
 
 
+def migrate_state(state_data: dict) -> None:
+    """Add new fields to peers from older state versions (in-place).
+
+    Idempotent: peers that already have the fields are untouched.
+    Currently adds: quota_gb, quota_suspended, quota_state_updated_at.
+    """
+    for peer in state_data.get("peers", []):
+        peer.setdefault("quota_gb", 0.0)
+        peer.setdefault("quota_suspended", False)
+        peer.setdefault("quota_state_updated_at", None)
+
+
 def add_peer(state_data: dict, peer: dict) -> None:
     state_data["peers"].append(peer)
 
@@ -127,7 +139,9 @@ def load_state(state_path: Path, master_key: bytes) -> dict:
         return empty_state()
     envelope = json.loads(_atomic_read_bytes(state_path))
     plaintext = crypto.decrypt_state(envelope, master_key)
-    return json.loads(plaintext)
+    state_data = json.loads(plaintext)
+    migrate_state(state_data)
+    return state_data
 
 
 def save_state(state_path: Path, state_data: dict, master_key: bytes) -> None:

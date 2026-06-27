@@ -1,8 +1,10 @@
 """Subprocess wrappers for wg and wg-quick commands, plus conf parsing/generation."""
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional
 
 
@@ -245,6 +247,17 @@ def wg_quick_restart(interface: str = "wg0") -> None:
     )
 
 
+def wg_interface_active(interface: str = "wg0") -> bool:
+    """True if wg-quick@<interface> systemd unit is active."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", f"wg-quick@{interface}"],
+        )
+        return result.returncode == 0
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 def wg_server_public_key(interface: str = "wg0") -> str:
     """Return the server's own public key via `wg show <interface> public-key`."""
     proc = subprocess.run(
@@ -269,3 +282,60 @@ def wg_server_public_key_from_conf(conf_path: str = "/etc/wireguard/wg0.conf") -
         ["wg", "pubkey"], input=priv, capture_output=True, text=True, check=True
     )
     return proc.stdout.strip()
+
+
+def wg_syncconf(interface: str = "wg0") -> bool:
+    """Apply config changes to a running interface without restart.
+
+    Strips PostUp/PostDown/Address via `wg-quick strip` then syncs via netlink.
+    Returns True on success, False on any failure (caller falls back to
+    wg-quick restart).
+    """
+    try:
+        strip = subprocess.run(
+            ["wg-quick", "strip", interface],
+            capture_output=True, text=True, check=True,
+        )
+        subprocess.run(
+            ["wg", "syncconf", interface, "/dev/stdin"],
+            input=strip.stdout, capture_output=True, text=True, check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def apply_state_to_wg(s: dict, cfg, mode: str = "syncconf") -> None:
+    """Regenerate /etc/wireguard/<interface>.conf from state and apply.
+
+    mode="syncconf": try wg syncconf (zero downtime), fall back to restart.
+    mode="restart": wg-quick restart directly (needed to clean PostUp/iptables).
+    """
+    interface = cfg["wg"]["interface"]
+    interface_path = Path(f"/etc/wireguard/{interface}.conf")
+    if interface_path.exists():
+        existing = parse_wg_conf(interface_path.read_text())
+        wg_interface = existing["interface"]
+    else:
+        wg_interface = {
+            "Address": f"{cfg['wg']['server_ip']}/{cfg['wg']['subnet'].split('/')[-1]}",
+            "ListenPort": "51820",
+        }
+    wg_peers = [
+        {
+            "PublicKey": p["public_key"],
+            "AllowedIPs": f"{p['ip']}/32",
+            "disabled": p.get("disabled", False) or p.get("quota_suspended", False),
+            "name": p["name"],
+        }
+        for p in s["peers"]
+    ]
+    conf_text = generate_wg_conf(wg_interface, wg_peers)
+    tmp = interface_path.with_suffix(".conf.tmp")
+    tmp.write_text(conf_text)
+    os.replace(tmp, interface_path)
+
+    if mode == "syncconf":
+        if wg_syncconf(interface):
+            return
+    wg_quick_restart(interface)

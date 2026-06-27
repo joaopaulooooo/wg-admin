@@ -21,6 +21,34 @@
     </div>
   </div>
 
+  {# VPN kill switch + quota display #}
+  <div class="sidebar-vpn">
+    <div class="vpn-status">
+      <span class="dot {{ 'active' if vpn_active else 'inactive' }}"></span>
+      VPN: {{ 'ativa' if vpn_active else 'desativada' }}
+    </div>
+    <div class="quota-display {{ 'danger' if global_exceeded else '' }}">
+      <span class="text-sm text-muted">30d</span>
+      {{ global_used_gb|round(1) }}{% if global_quota_gb > 0 %} / {{ global_quota_gb|int }}{% endif %} GB
+    </div>
+    {% if vpn_active %}
+    <form method="post" action="{{ url_for('vpn_toggle') }}"
+          onsubmit="return confirm('Desativar VPN? Todos os peers vão desconectar imediatamente.')">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <button type="submit" class="danger btn-block">
+        Desativar VPN
+      </button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('vpn_toggle') }}">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <button type="submit" class="success btn-block">
+        Ativar VPN
+      </button>
+    </form>
+    {% endif %}
+  </div>
+
   <nav class="sidebar-nav">
     <a href="{{ url_for('peers_list') }}" class="sidebar-link {{ 'active' if request.endpoint in ('peers_list', 'peer_new', 'peer_edit') }}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>

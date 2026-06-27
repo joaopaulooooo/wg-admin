@@ -1,13 +1,14 @@
 """Flask app: routes, auth, CSRF, rate limit."""
 from __future__ import annotations
 
-import os as _os
 import secrets as pysecrets
+import subprocess
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 from pathlib import Path
 
 from flask import (
-    Flask, abort, flash, redirect, render_template, request,
+    Flask, abort, flash, jsonify, redirect, render_template, request,
     session, url_for,
 )
 
@@ -19,35 +20,6 @@ STATE_PATH = Path("/wg-admin/state.json.enc")
 CONFIG_PATH = Path("/wg-admin/config.ini")
 RATELIMIT_PATH = Path("/wg-admin/secrets/auth_ratelimit.json")
 BANDWIDTH_PATH = Path("/wg-admin/bandwidth.json")
-
-
-def _apply_state_to_wg(s: dict, cfg) -> None:
-    """Regenerate /etc/wireguard/<interface>.conf from state and write atomically.
-
-    Module-level so T18 tests can monkeypatch `wg_admin.app._apply_state_to_wg`.
-    """
-    interface_path = Path(f"/etc/wireguard/{cfg['wg']['interface']}.conf")
-    if interface_path.exists():
-        existing = wg.parse_wg_conf(interface_path.read_text())
-        interface = existing["interface"]
-    else:
-        interface = {
-            "Address": f"{cfg['wg']['server_ip']}/{cfg['wg']['subnet'].split('/')[-1]}",
-            "ListenPort": "51820",
-        }
-    wg_peers = [
-        {
-            "PublicKey": p["public_key"],
-            "AllowedIPs": f"{p['ip']}/32",
-            "disabled": p.get("disabled", False),
-            "name": p["name"],
-        }
-        for p in s["peers"]
-    ]
-    conf_text = wg.generate_wg_conf(interface, wg_peers)
-    tmp = interface_path.with_suffix(".conf.tmp")
-    tmp.write_text(conf_text)
-    _os.replace(tmp, interface_path)
 
 
 def create_app() -> Flask:
@@ -83,8 +55,34 @@ def create_app() -> Flask:
             if request.endpoint in ("login", "logout"):
                 return
             token = session.get("csrf_token")
-            if not token or token != request.form.get("csrf_token"):
+            # No session token means the user is unauthenticated — let
+            # login_required handle the redirect rather than 403-ing on CSRF.
+            if token is None:
+                return
+            if token != request.form.get("csrf_token"):
                 abort(403)
+
+    from . import quota as quota_mod
+
+    @app.context_processor
+    def inject_globals():
+        try:
+            bw = bandwidth.load_bandwidth(BANDWIDTH_PATH)
+            global_q = cfg["quota"].getfloat("global_quota_gb", 0)
+            return {
+                "vpn_active": wg.wg_interface_active(cfg["wg"]["interface"]),
+                "global_used_gb": quota_mod.global_usage_gb(bw),
+                "global_quota_gb": global_q,
+                "global_exceeded": quota_mod.global_quota_exceeded(bw, global_q),
+            }
+        except Exception:
+            # If anything fails (bandwidth.json missing, etc.) — don't break every page
+            return {
+                "vpn_active": False,
+                "global_used_gb": 0.0,
+                "global_quota_gb": 0.0,
+                "global_exceeded": False,
+            }
 
     def login_required(f):
         @wraps(f)
@@ -201,6 +199,33 @@ def create_app() -> Flask:
             if is_online:
                 connected_count += 1
             bw_stats = bandwidth.get_peer_stats(bw, pub)
+
+            # Sparkline: last 30 days of rx+tx
+            today = datetime.now(timezone.utc).date()
+            dates_30 = [(today - timedelta(days=i)).isoformat() for i in range(29, -1, -1)]
+            peer_bw = bw.get("peers", {}).get(pub, {})
+            daily = peer_bw.get("daily", {})
+            sparkline_values = [
+                daily.get(d, {"rx": 0}).get("rx", 0) + daily.get(d, {"tx": 0}).get("tx", 0)
+                for d in dates_30
+            ]
+            sparkline = bandwidth.sparkline_path(sparkline_values)
+
+            # Quota display
+            quota_gb = peer.get("quota_gb", 0.0)
+            used_30d_gb = (bw_stats["thirty_day_rx"] + bw_stats["thirty_day_tx"]) / (1024**3)
+            if quota_gb > 0:
+                quota_pct = min(100, (used_30d_gb / quota_gb) * 100)
+                if peer.get("quota_suspended") or quota_pct >= 95:
+                    quota_class = "danger"
+                elif quota_pct >= 70:
+                    quota_class = "warn"
+                else:
+                    quota_class = "ok"
+            else:
+                quota_pct = None
+                quota_class = None
+
             peer_views.append({
                 "peer": peer,
                 "status": status,
@@ -213,6 +238,11 @@ def create_app() -> Flask:
                     "thirty_day_tx": bandwidth.format_bytes(bw_stats["thirty_day_tx"]),
                     "first_seen": bw_stats["first_seen"],
                 },
+                "sparkline": sparkline,
+                "quota_gb": quota_gb,
+                "used_30d_gb": used_30d_gb,
+                "quota_pct": quota_pct,
+                "quota_class": quota_class,
             })
 
         return render_template(
@@ -230,17 +260,21 @@ def create_app() -> Flask:
         if request.method == "POST":
             name = request.form.get("name", "").strip()
             notes = request.form.get("notes", "").strip()
+            quota_raw = request.form.get("quota_gb", "").strip()
+            try:
+                quota_gb = float(quota_raw) if quota_raw else 0.0
+            except ValueError:
+                quota_gb = 0.0
             if not name:
                 flash("Nome é obrigatório", "error")
+                return render_template("peer_form.html")
+            if quota_gb < 0:
+                flash("Cota não pode ser negativa", "error")
                 return render_template("peer_form.html")
 
             priv, pub = wg.wg_genkey()
             s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
-            ip = state.allocate_ip(
-                s,
-                cfg["wg"]["subnet"],
-                cfg["wg"]["server_ip"],
-            )
+            ip = state.allocate_ip(s, cfg["wg"]["subnet"], cfg["wg"]["server_ip"])
             new_peer = {
                 "id": state.new_peer_id(),
                 "name": name,
@@ -249,13 +283,15 @@ def create_app() -> Flask:
                 "private_key_enc": state.encrypt_private_key(priv, app.config["MASTER_KEY"]),
                 "ip": ip,
                 "disabled": False,
+                "quota_gb": quota_gb,
+                "quota_suspended": False,
+                "quota_state_updated_at": None,
                 "created_at": state.utc_now_iso(),
             }
             state.add_peer(s, new_peer)
             state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
             try:
-                _apply_state_to_wg(s, cfg)
-                wg.wg_quick_restart(cfg["wg"]["interface"])
+                wg.apply_state_to_wg(s, cfg, mode="syncconf")
             except Exception:
                 app.logger.exception("Failed to apply state to wg")
                 flash("Peer criado no estado, mas falhou apply ao wg — ver logs", "error")
@@ -272,8 +308,7 @@ def create_app() -> Flask:
             abort(404)
         state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
         try:
-            _apply_state_to_wg(s, cfg)
-            wg.wg_quick_restart(cfg["wg"]["interface"])
+            wg.apply_state_to_wg(s, cfg, mode="restart")
         except Exception:
             app.logger.exception("Failed to apply after delete")
             flash("Peer removido do estado, mas apply falhou — ver logs", "error")
@@ -290,8 +325,7 @@ def create_app() -> Flask:
         state.set_peer_disabled(s, peer_id, not peer.get("disabled", False))
         state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
         try:
-            _apply_state_to_wg(s, cfg)
-            wg.wg_quick_restart(cfg["wg"]["interface"])
+            wg.apply_state_to_wg(s, cfg, mode="restart")
         except Exception:
             app.logger.exception("Failed to apply after toggle")
             flash("Toggle registrado mas apply falhou", "error")
@@ -357,6 +391,75 @@ def create_app() -> Flask:
         png = confgen.render_qr_png(text)
         return Response(png, mimetype="image/png")
 
+    @app.route("/api/bandwidth/<peer_id>")
+    @login_required
+    def api_peer_bandwidth(peer_id):
+        s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
+        peer = state.find_peer_by_id(s, peer_id)
+        if peer is None:
+            abort(404)
+        bw = bandwidth.load_bandwidth(BANDWIDTH_PATH)
+        peer_bw = bw.get("peers", {}).get(peer.get("public_key", ""), {})
+        daily = peer_bw.get("daily", {})
+
+        today = datetime.now(timezone.utc).date()
+        dates = [(today - timedelta(days=i)).isoformat() for i in range(29, -1, -1)]
+        return jsonify({
+            "dates": dates,
+            "rx": [daily.get(d, {"rx": 0})["rx"] for d in dates],
+            "tx": [daily.get(d, {"tx": 0})["tx"] for d in dates],
+        })
+
+    @app.route("/api/bandwidth/global")
+    @login_required
+    def api_global_bandwidth():
+        s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
+        bw = bandwidth.load_bandwidth(BANDWIDTH_PATH)
+
+        today = datetime.now(timezone.utc).date()
+        dates = [(today - timedelta(days=i)).isoformat() for i in range(29, -1, -1)]
+        dates_set = set(dates)
+
+        # Build per-peer total over the 30-day window, sorted desc
+        peer_totals = []  # (name, pubkey, total_bytes)
+        for peer in s["peers"]:
+            pub = peer.get("public_key", "")
+            peer_bw = bw.get("peers", {}).get(pub, {})
+            total = 0
+            for d, v in peer_bw.get("daily", {}).items():
+                if d in dates_set:
+                    total += v.get("rx", 0) + v.get("tx", 0)
+            peer_totals.append((peer.get("name", "?"), pub, total))
+
+        peer_totals.sort(key=lambda x: x[2], reverse=True)
+
+        series = []
+        # Top 5 named peers (only those with > 0 bytes)
+        top = [p for p in peer_totals[:5] if p[2] > 0]
+        # Aggregate "outros" = rest
+        outros_total = sum(p[2] for p in peer_totals[5:])
+
+        for name, pub, _ in top:
+            peer_bw = bw.get("peers", {}).get(pub, {})
+            daily = peer_bw.get("daily", {})
+            series.append({
+                "name": name,
+                "data": [daily.get(d, {"rx": 0, "tx": 0}).get("rx", 0) +
+                         daily.get(d, {"rx": 0, "tx": 0}).get("tx", 0)
+                         for d in dates],
+            })
+        if outros_total > 0:
+            outros_per_day = [0] * 30
+            for name, pub, _ in peer_totals[5:]:
+                peer_bw = bw.get("peers", {}).get(pub, {})
+                daily = peer_bw.get("daily", {})
+                for i, d in enumerate(dates):
+                    v = daily.get(d, {"rx": 0, "tx": 0})
+                    outros_per_day[i] += v.get("rx", 0) + v.get("tx", 0)
+            series.append({"name": "outros", "data": outros_per_day})
+
+        return jsonify({"dates": dates, "series": series})
+
     @app.route("/peers/<peer_id>/edit", methods=["GET", "POST"])
     @login_required
     def peer_edit(peer_id):
@@ -368,11 +471,20 @@ def create_app() -> Flask:
             name = request.form.get("name", "").strip()
             notes = request.form.get("notes", "").strip()
             new_priv = request.form.get("private_key", "").strip()
+            quota_raw = request.form.get("quota_gb", "").strip()
+            try:
+                quota_gb = float(quota_raw) if quota_raw else 0.0
+            except ValueError:
+                quota_gb = 0.0
             if not name:
                 flash("Nome é obrigatório", "error")
-                return render_template("peer_edit.html", peer=peer), 400
+                return render_template("peer_edit.html", peer=peer)
+            if quota_gb < 0:
+                flash("Cota não pode ser negativa", "error")
+                return render_template("peer_edit.html", peer=peer)
             peer["name"] = name
             peer["notes"] = notes
+            peer["quota_gb"] = quota_gb
             if new_priv:
                 peer["private_key_enc"] = state.encrypt_private_key(new_priv, app.config["MASTER_KEY"])
                 flash("Chave privada atualizada — já podes descarregar .conf e QR", "success")
@@ -381,6 +493,24 @@ def create_app() -> Flask:
             state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
             return redirect(url_for("peers_list"))
         return render_template("peer_edit.html", peer=peer)
+
+    @app.route("/vpn/toggle", methods=["POST"])
+    @login_required
+    def vpn_toggle():
+        interface = cfg["wg"]["interface"]
+        if wg.wg_interface_active(interface):
+            subprocess.run(
+                ["systemctl", "stop", f"wg-quick@{interface}"],
+                capture_output=True, check=True,
+            )
+            flash("VPN desativada — todos os peers desconectados", "warning")
+        else:
+            subprocess.run(
+                ["systemctl", "start", f"wg-quick@{interface}"],
+                capture_output=True, check=True,
+            )
+            flash("VPN reativada", "success")
+        return redirect(request.referrer or url_for("peers_list"))
 
     @app.errorhandler(403)
     def forbidden(e):

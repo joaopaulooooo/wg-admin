@@ -1016,3 +1016,140 @@ details p {
   body { background: white; color: black; }
   .topnav, .peer-actions { display: none; }
 }
+
+/* === PEER CARD: SPARKLINE + QUOTA BAR === */
+.peer-sparkline {
+  margin: 0.5rem 0;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+.peer-sparkline:hover { opacity: 1; }
+.peer-sparkline:focus { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+.quota-bar {
+  position: relative;
+  height: 18px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+.quota-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+.quota-fill.quota-ok { background: var(--success); }
+.quota-fill.quota-warn { background: var(--warning); }
+.quota-fill.quota-danger { background: var(--danger); }
+.quota-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  color: white;
+  text-shadow: 0 0 4px rgba(0,0,0,0.7);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.badge-danger { background: var(--danger); color: white; }
+
+.banner {
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  font-weight: 500;
+}
+.banner-danger {
+  background: rgba(239, 68, 68, 0.15);
+  border-left: 4px solid var(--danger);
+  color: #fca5a5;
+}
+
+.global-chart {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+.global-chart h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+
+/* === SIDEBAR VPN KILL SWITCH === */
+.sidebar-vpn {
+  margin: 1rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.sidebar-vpn .vpn-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.sidebar-vpn .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.sidebar-vpn .dot.active {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}
+.sidebar-vpn .dot.inactive {
+  background: var(--text-muted);
+}
+.sidebar-vpn .quota-display {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-secondary);
+}
+.sidebar-vpn .quota-display.danger {
+  color: var(--danger);
+}
+.sidebar-vpn .quota-display .text-muted {
+  color: var(--text-muted);
+  margin-right: 0.25rem;
+}
+.sidebar-vpn .text-sm {
+  font-size: 0.75rem;
+}
+.sidebar-vpn form {
+  max-width: none;
+  margin: 0;
+}
+.sidebar-vpn .btn-block {
+  width: 100%;
+  justify-content: center;
+}
+.sidebar-vpn button.success {
+  background: var(--success);
+  color: white;
+  border: 1px solid transparent;
+}
+.sidebar-vpn button.success:hover {
+  background: var(--success);
+  box-shadow: 0 2px 12px var(--success-glow);
+}

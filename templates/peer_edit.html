@@ -12,6 +12,12 @@
     <label for="notes">NOTAS</label>
     <textarea id="notes" name="notes">{{ peer.notes }}</textarea>
 
+    <label for="quota_gb">COTA (GB, 0 = ilimitado)</label>
+    <input type="number" id="quota_gb" name="quota_gb" step="0.1" min="0"
+           value="{{ peer.quota_gb if peer.quota_gb is defined else 0 }}">
+    <p class="hint">Soma dos últimos 30 dias. Ao exceder, suspende automaticamente;
+       reativa sozinho quando baixar abaixo do limite.</p>
+
     <details>
       <summary>Chave privada (opcional)</summary>
       {% if peer.private_key_enc %}

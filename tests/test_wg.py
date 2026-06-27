@@ -275,3 +275,135 @@ def test_parse_does_not_treat_psk_as_pubkey():
         assert p.public_key != "abcd="
         assert "=" in p.public_key  # all pubkeys end with =
         assert len(p.public_key) == 44  # base64 32 bytes
+
+
+def test_apply_state_to_wg_syncconf_success(tmp_path, monkeypatch):
+    """apply_state_to_wg with mode=syncconf: calls syncconf, skips restart."""
+    from wg_admin import wg
+
+    interface_path = tmp_path / "wg0.conf"
+    interface_path.write_text("[Interface]\nAddress = 10.0.0.1/24\nListenPort = 51820\nPrivateKey = X\n")
+
+    calls = {"syncconf": False, "restart": False}
+    def fake_syncconf(iface):
+        calls["syncconf"] = True
+        return True
+    def fake_restart(iface):
+        calls["restart"] = True
+
+    monkeypatch.setattr(wg, "wg_syncconf", fake_syncconf)
+    monkeypatch.setattr(wg, "wg_quick_restart", fake_restart)
+    monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
+    monkeypatch.setattr("pathlib.Path.write_text", lambda self, data, **kw: None)
+    monkeypatch.setattr("os.replace", lambda src, dst: None)
+
+    cfg = type("C", (), {"__getitem__": lambda self, k: {"wg": {"interface": "wg0", "server_ip": "10.0.0.1", "subnet": "10.0.0.0/24"}}[k]})()
+    s = {"peers": [{"public_key": "PUB", "ip": "10.0.0.2", "name": "x", "disabled": False}]}
+    wg.apply_state_to_wg(s, cfg, mode="syncconf")
+    assert calls["syncconf"] is True
+    assert calls["restart"] is False
+
+
+def test_apply_state_to_wg_syncconf_failure_falls_back_to_restart(monkeypatch, tmp_path):
+    """If syncconf returns False, falls back to restart."""
+    from wg_admin import wg
+
+    calls = {"syncconf": False, "restart": False}
+    monkeypatch.setattr(wg, "wg_syncconf", lambda iface: (calls.__setitem__("syncconf", True), False)[1])
+    monkeypatch.setattr(wg, "wg_quick_restart", lambda iface: calls.__setitem__("restart", True))
+    monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
+    monkeypatch.setattr("pathlib.Path.write_text", lambda self, data, **kw: None)
+    monkeypatch.setattr("os.replace", lambda src, dst: None)
+
+    cfg = type("C", (), {"__getitem__": lambda self, k: {"wg": {"interface": "wg0", "server_ip": "10.0.0.1", "subnet": "10.0.0.0/24"}}[k]})()
+    s = {"peers": []}
+    wg.apply_state_to_wg(s, cfg, mode="syncconf")
+    assert calls["syncconf"] is True
+    assert calls["restart"] is True
+
+
+def test_apply_state_to_wg_restart_mode_skips_syncconf(monkeypatch):
+    """mode=restart never calls syncconf."""
+    from wg_admin import wg
+
+    calls = {"syncconf": False, "restart": False}
+    monkeypatch.setattr(wg, "wg_syncconf", lambda iface: calls.__setitem__("syncconf", True))
+    monkeypatch.setattr(wg, "wg_quick_restart", lambda iface: calls.__setitem__("restart", True))
+    monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
+    monkeypatch.setattr("pathlib.Path.write_text", lambda self, data, **kw: None)
+    monkeypatch.setattr("os.replace", lambda src, dst: None)
+
+    cfg = type("C", (), {"__getitem__": lambda self, k: {"wg": {"interface": "wg0", "server_ip": "10.0.0.1", "subnet": "10.0.0.0/24"}}[k]})()
+    s = {"peers": []}
+    wg.apply_state_to_wg(s, cfg, mode="restart")
+    assert calls["syncconf"] is False
+    assert calls["restart"] is True
+
+
+def test_wg_syncconf_success(monkeypatch):
+    """wg_syncconf: makes two subprocess calls, returns True on success."""
+    from wg_admin import wg
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "stripped config"
+            returncode = 0
+        return R()
+    monkeypatch.setattr("wg_admin.wg.subprocess.run", fake_run)
+    result = wg.wg_syncconf("wg0")
+    assert result is True
+    assert calls[0] == ["wg-quick", "strip", "wg0"]
+    assert calls[1] == ["wg", "syncconf", "wg0", "/dev/stdin"]
+
+
+def test_wg_syncconf_strip_failure_returns_false(monkeypatch):
+    from wg_admin import wg
+    import subprocess
+    def fake_run(cmd, **kwargs):
+        if cmd[1] == "strip":
+            raise subprocess.CalledProcessError(1, cmd)
+        class R:
+            stdout = ""
+            returncode = 0
+        return R()
+    monkeypatch.setattr("wg_admin.wg.subprocess.run", fake_run)
+    assert wg.wg_syncconf("wg0") is False
+
+
+def test_wg_syncconf_syncconf_failure_returns_false(monkeypatch):
+    from wg_admin import wg
+    import subprocess
+    def fake_run(cmd, **kwargs):
+        if cmd[1] == "syncconf":
+            raise subprocess.CalledProcessError(1, cmd)
+        class R:
+            stdout = "stripped"
+            returncode = 0
+        return R()
+    monkeypatch.setattr("wg_admin.wg.subprocess.run", fake_run)
+    assert wg.wg_syncconf("wg0") is False
+
+
+def test_wg_interface_active_true(monkeypatch):
+    from wg_admin import wg
+    class FakeResult:
+        returncode = 0
+    monkeypatch.setattr("wg_admin.wg.subprocess.run", lambda *a, **k: FakeResult())
+    assert wg.wg_interface_active("wg0") is True
+
+
+def test_wg_interface_active_false(monkeypatch):
+    from wg_admin import wg
+    class FakeResult:
+        returncode = 3  # non-zero = inactive
+    monkeypatch.setattr("wg_admin.wg.subprocess.run", lambda *a, **k: FakeResult())
+    assert wg.wg_interface_active("wg0") is False
+
+
+def test_wg_interface_active_file_not_found_returns_false(monkeypatch):
+    from wg_admin import wg
+    def boom(*a, **k):
+        raise FileNotFoundError()
+    monkeypatch.setattr("wg_admin.wg.subprocess.run", boom)
+    assert wg.wg_interface_active("wg0") is False

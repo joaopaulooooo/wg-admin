@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Per-peer bandwidth quotas** — set `quota_gb` on each peer to auto-suspend when rolling 30-day usage exceeds the limit. Re-enables automatically when usage drops below.
+- **Global bandwidth quota** — `[quota] global_quota_gb` in config.ini. Sidebar shows rolling 30-day total. Red banner when exceeded.
+- **VPN kill switch** — sidebar button to stop/start `wg-quick@wg0` for emergencies.
+- **Live bandwidth charts** — sparkline per peer card, modal with 30-day rx/tx line chart, global stacked area chart at top of `/peers`.
+- **WhatsApp share** — modal that asks DDI + phone number, sends `.conf` as attachment via Web Share API on mobile or download+chat on desktop.
+- **syncconf hot-reload** — new peers no longer drop active tunnels (zero-downtime create).
 - **GitHub repo link** in the sidebar footer (opens in new tab with `rel="noopener"`).
 
 ### Changed
@@ -17,6 +23,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   either `online` (handshake within last 180s) or `offline` (anything else, including
   no recent handshake or peer not in `wg show`). `inativo` still used for disabled
   peers.
+- **`_apply_state_to_wg` moved from `app.py` to `wg.py`** as `apply_state_to_wg(s, cfg, mode)`. Required for bandwidth timer to enforce quotas.
+- **Unauthenticated POSTs redirect to login instead of 403** — CSRF check now skips when there's no session, letting `login_required` handle the redirect.
 
 ## [0.1.0] — 2026-06-24
 
