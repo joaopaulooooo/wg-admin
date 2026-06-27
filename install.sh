@@ -776,11 +776,14 @@ info "Running initial bandwidth sample"
 systemctl start wg-admin-bandwidth.service 2>/dev/null || \
   "$INSTALL_DIR/venv/bin/python" -m wg_admin.bandwidth track /wg-admin/bandwidth.json 2>/dev/null || true
 
-# --- firewalld ---
+# --- Abrir porta do painel no firewall do sistema (ufw ou firewalld) ---
 if command -v firewall-cmd >/dev/null; then
-  info "Opening firewalld"
+  info "A abrir porta $PORT/tcp no firewalld"
   firewall-cmd --add-port="$PORT/tcp" --permanent || true
   firewall-cmd --reload || true
+elif command -v ufw >/dev/null; then
+  info "A abrir porta $PORT/tcp no ufw"
+  ufw allow "$PORT/tcp" || true
 fi
 
 # --- WG port (para mostrar nas instruções finais) ---
