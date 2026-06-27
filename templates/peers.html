@@ -5,14 +5,25 @@
   <h1><span class="accent-bar"></span>Peers</h1>
   <p class="subtitle">// {{ peers|length }} total · {{ statuses|length }} ativos</p>
 
+  {% set now_ts = namespace(value=0) %}
+  {% set connected_count = namespace(value=0) %}
+  {% for peer in peers %}
+    {% if not peer.disabled %}
+      {% set st = statuses.get(peer.public_key) %}
+      {% if st and st.latest_handshake and st.latest_handshake > (now() | int) - 180 %}
+        {% set connected_count.value = connected_count.value + 1 %}
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+
   <div class="stats">
     <div class="stat">
       <span class="stat-label">Total Peers</span>
       <span class="stat-value">{{ peers|length }}</span>
     </div>
     <div class="stat">
-      <span class="stat-label">Conectados</span>
-      <span class="stat-value {% if statuses|length > 0 %}active{% endif %}">{{ statuses|length }}</span>
+      <span class="stat-label">Conectados agora</span>
+      <span class="stat-value {% if connected_count.value > 0 %}active{% endif %}">{{ connected_count.value }}</span>
     </div>
     <div class="stat">
       <span class="stat-label">Importados</span>
@@ -32,6 +43,7 @@
   <div class="peer-grid">
     {% for peer in peers %}
     {% set status = statuses.get(peer.public_key) %}
+    {% set is_online = status and status.latest_handshake and status.latest_handshake > (now() | int) - 180 %}
     <div class="peer-card {{ 'disabled' if peer.disabled else '' }}">
       <div class="peer-card-header">
         <h3 class="peer-name">
@@ -39,14 +51,19 @@
           {% if peer.disabled %}<em>(inativo)</em>{% endif %}
           {% if not peer.private_key_enc %}<em title="Chave privada não disponível — importado do wg0.conf">🔒</em>{% endif %}
         </h3>
-        <span class="peer-status {{ 'inactive' if peer.disabled or not status else '' }}">
-          {% if peer.disabled %}inativo{% elif status %}online{% else %}offline{% endif %}
+        <span class="peer-status {{ 'inactive' if peer.disabled or not is_online else '' }}">
+          {% if peer.disabled %}inativo{% elif is_online %}online{% elif status %}configurado{% else %}offline{% endif %}
         </span>
       </div>
 
       <dl class="peer-meta">
         <dt>IP</dt>
         <dd>{{ peer.ip }}</dd>
+
+        <dt>pubkey</dt>
+        <dd title="{{ peer.public_key }}" style="cursor: help;">
+          {{ peer.public_key[:16] }}…{{ peer.public_key[-4:] if peer.public_key else '' }}
+        </dd>
 
         {% if status and status.latest_handshake %}
         <dt>handshake</dt>
