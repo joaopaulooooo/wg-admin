@@ -71,7 +71,13 @@
       <div class="peer-actions">
         {% if peer.private_key_enc %}
         <a href="{{ url_for('peer_conf', peer_id=peer.id) }}" class="btn secondary">.conf</a>
-        <a href="{{ url_for('peer_qr', peer_id=peer.id) }}" class="btn secondary">QR</a>
+        <a href="{{ url_for('peer_qr', peer_id=peer.id) }}"
+           class="btn secondary qr-trigger"
+           data-peer-name="{{ peer.name }}"
+           data-qr-url="{{ url_for('peer_qr', peer_id=peer.id) }}"
+           data-conf-url="{{ url_for('peer_conf', peer_id=peer.id) }}">
+          QR
+        </a>
         {% endif %}
         <a href="{{ url_for('peer_edit', peer_id=peer.id) }}" class="btn secondary">Editar</a>
         <form method="post" action="{{ url_for('peer_toggle', peer_id=peer.id) }}">
@@ -92,4 +98,108 @@
   </div>
   {% endif %}
 </div>
+
+{# ─── QR Modal ─── #}
+<div class="modal" id="qr-modal" aria-hidden="true" role="dialog" aria-labelledby="qr-modal-title">
+  <div class="modal-backdrop" data-modal-close></div>
+  <div class="modal-card">
+    <button class="modal-close" data-modal-close aria-label="Fechar">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+
+    <h2 id="qr-modal-title" class="modal-title">
+      QR Code — <span class="peer-name"></span>
+    </h2>
+
+    <div class="qr-display">
+      <img id="qr-image" alt="WireGuard config QR code">
+    </div>
+
+    <p class="modal-hint">Aponta a câmara da app WireGuard para o código</p>
+
+    <div class="modal-actions">
+      <a id="qr-conf-link" class="btn secondary" download>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        .conf
+      </a>
+      <a id="qr-download" class="btn secondary" download>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        PNG
+      </a>
+      <button data-modal-close class="btn">Fechar</button>
+    </div>
+
+    <p class="modal-footer-hint">
+      <kbd>ESC</kbd> para fechar · click fora para fechar
+    </p>
+  </div>
+</div>
+
+<script>
+(function() {
+  const modal = document.getElementById('qr-modal');
+  if (!modal) return;
+
+  const img = modal.querySelector('#qr-image');
+  const title = modal.querySelector('.peer-name');
+  const confLink = modal.querySelector('#qr-conf-link');
+  const qrDownload = modal.querySelector('#qr-download');
+  let lastFocused = null;
+
+  function open(trigger) {
+    const qrUrl = trigger.dataset.qrUrl;
+    const confUrl = trigger.dataset.confUrl;
+    const name = trigger.dataset.peerName;
+
+    img.src = qrUrl;
+    title.textContent = name;
+    confLink.href = confUrl;
+    confLink.setAttribute('download', `wg-${name}.conf`);
+    qrDownload.href = qrUrl;
+    qrDownload.setAttribute('download', `wg-${name}-qr.png`);
+
+    lastFocused = document.activeElement;
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+
+    // Focus the close button for keyboard users
+    setTimeout(() => modal.querySelector('.modal-close').focus(), 50);
+  }
+
+  function close() {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    if (lastFocused) lastFocused.focus();
+    // Clear src after fade-out to avoid showing stale image
+    setTimeout(() => { img.src = ''; }, 250);
+  }
+
+  document.querySelectorAll('.qr-trigger').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      open(btn);
+    });
+  });
+
+  modal.querySelectorAll('[data-modal-close]').forEach(el => {
+    el.addEventListener('click', close);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!modal.classList.contains('open')) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    }
+  });
+
+  // Close if click directly on backdrop (not inside card)
+  modal.querySelector('.modal-backdrop').addEventListener('click', close);
+})();
+</script>
 {% endblock %}
