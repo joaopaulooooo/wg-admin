@@ -829,8 +829,9 @@ if [[ -f /etc/wireguard/wg0.conf ]]; then
 fi
 
 # --- Verificação final antes de mostrar mensagem de sucesso ---
-CONFIG_CHECK=$(grep '^server_public_key' "$INSTALL_DIR/config.ini" 2>/dev/null | cut -d= -f2 | tr -d ' ')
-LIVE_PUB=$(wg show wg0 public-key 2>/dev/null || true)
+# Nota: cut -d= -f2- preserva o trailing '=' das base64 keys
+CONFIG_CHECK=$(grep '^server_public_key' "$INSTALL_DIR/config.ini" 2>/dev/null | sed 's/^server_public_key[[:space:]]*=[[:space:]]*//' | tr -d ' \t\r\n')
+LIVE_PUB=$(wg show wg0 public-key 2>/dev/null | tr -d ' \t\r\n' || true)
 
 if [[ -z "$CONFIG_CHECK" || "$CONFIG_CHECK" == "(none)" ]]; then
   PUBLIC_KEY_WARNING=true
@@ -878,7 +879,7 @@ cat <<EOF
 EOF
 
 if [[ -n "$LIVE_PUB" ]]; then
-cat <<EOF
+cat <<'EOF'
   # O WireGuard está a correr — esta é a public key correta:
   PUB=$(wg show wg0 public-key)
   sudo sed -i "s|^server_public_key = .*|server_public_key = $PUB|" /wg-admin/config.ini
@@ -886,11 +887,11 @@ cat <<EOF
 
 EOF
 else
-cat <<EOF
+cat <<'EOF'
   # O wg0 não está a correr. Vamos obter do wg0.conf:
-  PRIV=\$(grep '^PrivateKey' /etc/wireguard/wg0.conf | head -1 | cut -d= -f2 | tr -d ' ')
-  PUB=\$(echo "\$PRIV" | wg pubkey)
-  sudo sed -i "s|^server_public_key = .*|server_public_key = \$PUB|" /wg-admin/config.ini
+  PRIV=$(grep '^PrivateKey' /etc/wireguard/wg0.conf | head -1 | cut -d= -f2 | tr -d ' ')
+  PUB=$(echo "$PRIV" | wg pubkey)
+  sudo sed -i "s|^server_public_key = .*|server_public_key = $PUB|" /wg-admin/config.ini
   sudo systemctl start wg-quick@wg0
   sudo systemctl restart wg-admin.service
 
