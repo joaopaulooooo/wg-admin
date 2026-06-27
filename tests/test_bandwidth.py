@@ -9,7 +9,7 @@ from wg_admin import bandwidth
 from wg_admin.wg import PeerStatus
 
 
-def _make_status(pubkey="PUB1", rx=0, tx=0):
+def _make_status(pubkey="Y73ATDEJlSfrmn4NvB84WPA6B7HkpHXIHW/TJIJ5kmw=", rx=0, tx=0):
     return PeerStatus(
         public_key=pubkey,
         endpoint=None,
@@ -18,6 +18,10 @@ def _make_status(pubkey="PUB1", rx=0, tx=0):
         transfer_rx=rx,
         transfer_tx=tx,
     )
+
+
+# Short alias for tests that need a default fake key (used in early tests)
+PUB1 = "Y73ATDEJlSfrmn4NvB84WPA6B7HkpHXIHW/TJIJ5kmw="
 
 
 def test_format_bytes_small():
@@ -44,10 +48,10 @@ def test_track_sample_creates_file_if_missing(tmp_path, monkeypatch):
     bandwidth.track_sample(bw_path)
 
     data = json.loads(bw_path.read_text())
-    assert "PUB1" in data["peers"]
-    assert data["peers"]["PUB1"]["total_rx"] == 0  # first sample, no delta yet
-    assert data["peers"]["PUB1"]["total_tx"] == 0
-    assert data["peers"]["PUB1"]["last_sample"]["rx"] == 1000
+    assert PUB1 in data["peers"]
+    assert data["peers"][PUB1]["total_rx"] == 0  # first sample, no delta yet
+    assert data["peers"][PUB1]["total_tx"] == 0
+    assert data["peers"][PUB1]["last_sample"]["rx"] == 1000
 
 
 def test_track_sample_accumulates_delta(tmp_path, monkeypatch):
@@ -68,7 +72,7 @@ def test_track_sample_accumulates_delta(tmp_path, monkeypatch):
     bandwidth.track_sample(bw_path)
 
     data = json.loads(bw_path.read_text())
-    p = data["peers"]["PUB1"]
+    p = data["peers"][PUB1]
     assert p["total_rx"] == 500  # 1500 - 1000
     assert p["total_tx"] == 1000  # 3000 - 2000
 
@@ -91,7 +95,7 @@ def test_track_sample_handles_counter_reset(tmp_path, monkeypatch):
     bandwidth.track_sample(bw_path)
 
     data = json.loads(bw_path.read_text())
-    p = data["peers"]["PUB1"]
+    p = data["peers"][PUB1]
     # After reset: delta_rx=500 (entire current value), delta_tx=800
     assert p["total_rx"] == 500
     assert p["total_tx"] == 800
@@ -114,9 +118,9 @@ def test_track_sample_populates_daily_bucket(tmp_path, monkeypatch):
 
     data = json.loads(bw_path.read_text())
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    assert today in data["peers"]["PUB1"]["daily"]
-    assert data["peers"]["PUB1"]["daily"][today]["rx"] == 2000
-    assert data["peers"]["PUB1"]["daily"][today]["tx"] == 3000
+    assert today in data["peers"][PUB1]["daily"]
+    assert data["peers"][PUB1]["daily"][today]["rx"] == 2000
+    assert data["peers"][PUB1]["daily"][today]["tx"] == 3000
 
 
 def test_prune_old_daily_buckets(tmp_path, monkeypatch):
@@ -128,7 +132,7 @@ def test_prune_old_daily_buckets(tmp_path, monkeypatch):
 
     bw_path.write_text(json.dumps({
         "peers": {
-            "PUB1": {
+            PUB1: {
                 "first_seen": old_date,
                 "total_rx": 1000000,
                 "total_tx": 2000000,
@@ -148,7 +152,7 @@ def test_prune_old_daily_buckets(tmp_path, monkeypatch):
     bandwidth.track_sample(bw_path)
 
     data = json.loads(bw_path.read_text())
-    daily = data["peers"]["PUB1"]["daily"]
+    daily = data["peers"][PUB1]["daily"]
     assert old_date not in daily  # pruned
     assert recent_date in daily   # kept
 
@@ -176,7 +180,7 @@ def test_get_peer_stats_aggregates_30_days(tmp_path):
 
     bw_path.write_text(json.dumps({
         "peers": {
-            "PUB1": {
+            PUB1: {
                 "first_seen": dates[-1],
                 "total_rx": 999999999,
                 "total_tx": 888888888,
@@ -187,7 +191,7 @@ def test_get_peer_stats_aggregates_30_days(tmp_path):
     }))
 
     bw = bandwidth.load_bandwidth(bw_path)
-    stats = bandwidth.get_peer_stats(bw, "PUB1")
+    stats = bandwidth.get_peer_stats(bw, PUB1)
 
     # Last 30 days only — days 31-35 should be excluded
     expected_rx = sum(100 * (i + 1) for i in range(30))

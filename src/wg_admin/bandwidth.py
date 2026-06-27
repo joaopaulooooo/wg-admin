@@ -101,6 +101,10 @@ def track_sample(path: Path = DEFAULT_PATH, interface: str = "wg0") -> None:
 
     for status in statuses:
         pub = status.public_key
+        # Sanity check: skip invalid pubkeys (parser bug fallback)
+        # Real WireGuard pubkeys are 44-char base64 ending with '='
+        if not pub or "=" not in pub or len(pub) < 40 or pub == "(none)":
+            continue
         peer = peers_dict.get(pub)
 
         if peer is None:
@@ -145,6 +149,12 @@ def track_sample(path: Path = DEFAULT_PATH, interface: str = "wg0") -> None:
 
 def get_peer_stats(bw: dict, pubkey: str) -> dict:
     """Return {total_rx, total_tx, thirty_day_rx, thirty_day_tx, first_seen} for a peer."""
+    if not pubkey or pubkey == "(none)":
+        return {
+            "total_rx": 0, "total_tx": 0,
+            "thirty_day_rx": 0, "thirty_day_tx": 0,
+            "first_seen": None,
+        }
     peer = bw.get("peers", {}).get(pubkey)
     if peer is None:
         return {
