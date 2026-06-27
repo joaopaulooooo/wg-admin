@@ -374,6 +374,54 @@ print(parsed['interface'].get('Address', '10.0.0.1/24').split('/')[0])
   fi
 fi
 
+# --- Auto-detectar IP dinâmico e atualizar endpoint_host se necessário ---
+if [[ -f "$INSTALL_DIR/config.ini" ]]; then
+  CURRENT_ENDPOINT=$(grep '^endpoint_host' "$INSTALL_DIR/config.ini" | cut -d= -f2 | tr -d ' ')
+
+  # Só auto-atualizar se o endpoint atual for um IP (não hostname/DDNS)
+  if [[ "$CURRENT_ENDPOINT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    DETECTED_IP=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null || echo "")
+
+    if [[ -n "$DETECTED_IP" && "$DETECTED_IP" != "$CURRENT_ENDPOINT" ]]; then
+      info ""
+      info "📡 IP público mudou desde última instalação:"
+      info "   Antes: $CURRENT_ENDPOINT"
+      info "   Agora: $DETECTED_IP"
+      info ""
+      info "   A atualizar endpoint_host no config.ini..."
+      "$INSTALL_DIR/venv/bin/python" -c "
+import configparser
+c = configparser.ConfigParser()
+c.read('$INSTALL_DIR/config.ini')
+c['peer_defaults']['endpoint_host'] = '$DETECTED_IP'
+with open('$INSTALL_DIR/config.ini', 'w') as f:
+    c.write(f)
+"
+      info "   ✓ Atualizado"
+
+      # Re-gerar o self-signed cert com o novo IP (se aplicável)
+      if [[ -f /etc/wg-admin/selfsigned.crt ]]; then
+        info "   A regenerar certificado self-signed com novo IP..."
+        rm -f /etc/wg-admin/selfsigned.crt /etc/wg-admin/selfsigned.key
+        openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+          -keyout /etc/wg-admin/selfsigned.key \
+          -out /etc/wg-admin/selfsigned.crt \
+          -subj "/CN=$DETECTED_IP" \
+          -addext "subjectAltName=IP:$DETECTED_IP" 2>/dev/null
+        chmod 600 /etc/wg-admin/selfsigned.key
+        info "   ✓ Certificado regenerado"
+      fi
+
+      info ""
+      info "   💡 Dica: para evitar ter de re-correr install.sh em cada restart da AWS:"
+      info "      - Associa um Elastic IP à instância (grátis enquanto associado)"
+      info "      - Ou usa um hostname DDNS (duckdns.org, no-ip.com) e re-corre install.sh"
+      info "        com esse hostname em vez do IP"
+      info ""
+    fi
+  fi
+fi
+
 # --- Sempre popular server_public_key (idempotente — tenta várias fontes) ---
 info "A garantir server_public_key no config.ini"
 
