@@ -374,16 +374,80 @@ print(parsed['interface'].get('Address', '10.0.0.1/24').split('/')[0])
   fi
 fi
 
-# --- Sempre popular server_public_key (idempotente — não depende de config.ini ser novo) ---
-if [[ -f /etc/wireguard/wg0.conf && -f "$INSTALL_DIR/config.ini" ]]; then
-  SERVER_PRIV=$(grep '^PrivateKey' /etc/wireguard/wg0.conf | head -1 | sed 's/.*= *//; s/ *$//')
-  if [[ -n "$SERVER_PRIV" ]]; then
-    SERVER_PUB=$(echo "$SERVER_PRIV" | wg pubkey 2>/dev/null || true)
-    if [[ -n "$SERVER_PUB" ]]; then
-      CURRENT_PUB=$(grep '^server_public_key' "$INSTALL_DIR/config.ini" | cut -d= -f2 | tr -d ' ')
-      if [[ "$CURRENT_PUB" != "$SERVER_PUB" ]]; then
-        info "A actualizar server_public_key no config.ini: $SERVER_PUB"
-        "$INSTALL_DIR/venv/bin/python" -c "
+# --- Sempre popular server_public_key (idempotente — tenta várias fontes) ---
+info "A garantir server_public_key no config.ini"
+
+SERVER_PUB=$("$INSTALL_DIR/venv/bin/python" <<'PYEOF'
+import subprocess
+import sys
+import re
+from pathlib import Path
+
+# Método 1: wg show (mais fiável — lê do runtime se a interface estiver up)
+for iface in ("wg0", "wg1", "wgserver"):
+    try:
+        r = subprocess.run(
+            ["wg", "show", iface, "public-key"],
+            capture_output=True, text=True, check=True, timeout=5
+        )
+        pub = r.stdout.strip()
+        if pub and pub != "(none)":
+            print(pub)
+            sys.exit(0)
+    except Exception:
+        continue
+
+# Método 2: procurar PrivateKey em wg0.conf e derivar via wg pubkey
+try:
+    conf = Path("/etc/wireguard/wg0.conf")
+    if conf.exists():
+        for line in conf.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("#"):
+                continue
+            m = re.match(r"^PrivateKey\s*=\s*(.+)$", line)
+            if m:
+                priv = m.group(1).strip()
+                r = subprocess.run(
+                    ["wg", "pubkey"], input=priv,
+                    capture_output=True, text=True, check=True, timeout=5
+                )
+                pub = r.stdout.strip()
+                if pub:
+                    print(pub)
+                    sys.exit(0)
+except Exception as e:
+    print(f"ERRO: {e}", file=sys.stderr)
+
+# Método 3: procurar em qualquer ficheiro /etc/wireguard/*.conf
+try:
+    for conf in Path("/etc/wireguard").glob("*.conf"):
+        for line in conf.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("#"):
+                continue
+            m = re.match(r"^PrivateKey\s*=\s*(.+)$", line)
+            if m:
+                priv = m.group(1).strip()
+                r = subprocess.run(
+                    ["wg", "pubkey"], input=priv,
+                    capture_output=True, text=True, check=True, timeout=5
+                )
+                pub = r.stdout.strip()
+                if pub:
+                    print(f"Found in {conf.name}: {pub}", file=sys.stderr)
+                    print(pub)
+                    sys.exit(0)
+except Exception:
+    pass
+
+sys.exit(1)
+PYEOF
+)
+
+if [[ -n "$SERVER_PUB" ]]; then
+  info "Server public key: $SERVER_PUB"
+  "$INSTALL_DIR/venv/bin/python" -c "
 import configparser
 c = configparser.ConfigParser()
 c.read('$INSTALL_DIR/config.ini')
@@ -391,9 +455,15 @@ c['wg']['server_public_key'] = '$SERVER_PUB'
 with open('$INSTALL_DIR/config.ini', 'w') as f:
     c.write(f)
 "
-      fi
-    fi
+  # Verificação final
+  ACTUAL_IN_CONFIG=$(grep '^server_public_key' "$INSTALL_DIR/config.ini" | cut -d= -f2 | tr -d ' ')
+  if [[ "$ACTUAL_IN_CONFIG" == "$SERVER_PUB" ]]; then
+    info "✓ config.ini tem server_public_key correto"
+  else
+    err "config.ini não tem server_public_key correto (esperado: $SERVER_PUB, obtido: $ACTUAL_IN_CONFIG)"
   fi
+else
+  err "Não consegui obter server public key por nenhum método. WireGuard está instalado? wg0.conf existe?"
 fi
 
 # --- Import existing peers ---
