@@ -455,15 +455,17 @@ c['wg']['server_public_key'] = '$SERVER_PUB'
 with open('$INSTALL_DIR/config.ini', 'w') as f:
     c.write(f)
 "
-  # Verificação final
-  ACTUAL_IN_CONFIG=$(grep '^server_public_key' "$INSTALL_DIR/config.ini" | cut -d= -f2 | tr -d ' ')
-  if [[ "$ACTUAL_IN_CONFIG" == "$SERVER_PUB" ]]; then
-    info "✓ config.ini tem server_public_key correto"
-  else
-    err "config.ini não tem server_public_key correto (esperado: $SERVER_PUB, obtido: $ACTUAL_IN_CONFIG)"
-  fi
 else
-  err "Não consegui obter server public key por nenhum método. WireGuard está instalado? wg0.conf existe?"
+  info ""
+  info "⚠️  AVISO: Não consegui obter server public key automaticamente."
+  info "   Vais precisar de o obter manualmente e escrever no config.ini."
+  info "   Comando para obter:"
+  info "     sudo wg show wg0 public-key"
+  info "   Ou, se wg0 não estiver a correr:"
+  info "     sudo wg pubkey < /etc/wireguard/wg0.conf  # (não funciona assim — ver docs)"
+  info "   Depois edita /wg-admin/config.ini e cola na linha:"
+  info "     server_public_key = <cola-aqui>"
+  info ""
 fi
 
 # --- Import existing peers ---
@@ -728,7 +730,30 @@ if [[ -f /etc/wireguard/wg0.conf ]]; then
   WG_PORT_CFG=$(grep '^ListenPort' /etc/wireguard/wg0.conf | head -1 | cut -d= -f2 | tr -d ' ')
 fi
 
+# --- Verificação final antes de mostrar mensagem de sucesso ---
+CONFIG_CHECK=$(grep '^server_public_key' "$INSTALL_DIR/config.ini" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+LIVE_PUB=$(wg show wg0 public-key 2>/dev/null || true)
+
+if [[ -z "$CONFIG_CHECK" || "$CONFIG_CHECK" == "(none)" ]]; then
+  PUBLIC_KEY_WARNING=true
+elif [[ -n "$LIVE_PUB" && "$CONFIG_CHECK" != "$LIVE_PUB" ]]; then
+  PUBLIC_KEY_WARNING=true
+else
+  PUBLIC_KEY_WARNING=false
+fi
+
 # --- Final message ---
+if [ "$PUBLIC_KEY_WARNING" = true ]; then
+cat <<EOF
+
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                       ║
+║              ⚠️  wg-admin instalado (com avisos)                      ║
+║                                                                       ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+EOF
+else
 cat <<EOF
 
 ╔══════════════════════════════════════════════════════════════════════╗
@@ -738,6 +763,49 @@ cat <<EOF
 ╚══════════════════════════════════════════════════════════════════════╝
 
 EOF
+fi
+
+# Aviso sobre server_public_key em falta
+if [ "$PUBLIC_KEY_WARNING" = true ]; then
+cat <<EOF
+
+━━━ ⚠️  AVISO: server_public_key não configurado ━━━━━━━━━━━━━━━━━━━━━━━
+
+  O campo 'server_public_key' no config.ini está vazio ou incorreto.
+  Sem isto, os .conf gerados para os peers VÃO TER A PublicKey vazia
+  e não vão conseguir conectar.
+
+  Para resolver agora (copia e cola estes comandos):
+
+EOF
+
+if [[ -n "$LIVE_PUB" ]]; then
+cat <<EOF
+  # O WireGuard está a correr — esta é a public key correta:
+  PUB=$(wg show wg0 public-key)
+  sudo sed -i "s|^server_public_key = .*|server_public_key = $PUB|" /wg-admin/config.ini
+  sudo systemctl restart wg-admin.service
+
+EOF
+else
+cat <<EOF
+  # O wg0 não está a correr. Vamos obter do wg0.conf:
+  PRIV=\$(grep '^PrivateKey' /etc/wireguard/wg0.conf | head -1 | cut -d= -f2 | tr -d ' ')
+  PUB=\$(echo "\$PRIV" | wg pubkey)
+  sudo sed -i "s|^server_public_key = .*|server_public_key = \$PUB|" /wg-admin/config.ini
+  sudo systemctl start wg-quick@wg0
+  sudo systemctl restart wg-admin.service
+
+EOF
+fi
+
+cat <<EOF
+  Depois disso, tira um .conf dum peer pelo painel — PublicKey já deve aparecer.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+EOF
+fi
 
 # ─── PASO 1: Abrir painel ───
 cat <<EOF
