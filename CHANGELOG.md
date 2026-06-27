@@ -25,6 +25,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   peers.
 - **`_apply_state_to_wg` moved from `app.py` to `wg.py`** as `apply_state_to_wg(s, cfg, mode)`. Required for bandwidth timer to enforce quotas.
 - **Unauthenticated POSTs redirect to login instead of 403** — CSRF check now skips when there's no session, letting `login_required` handle the redirect.
+- **State schema gained 3 fields per peer**: `quota_gb` (float, 0=unlimited), `quota_suspended` (bool), `quota_state_updated_at` (ISO 8601 or None). Migration runs idempotently on every `load_state` via `setdefault`.
+- **`config.ini` gained `[quota]` section** with `global_quota_gb` default `0` (unlimited).
+
+### Tests
+- 161 total (up from 116), 89% coverage across:
+  - `wg.py` — added tests for `wg_syncconf`, `wg_interface_active`, `apply_state_to_wg(mode=...)` (8 new)
+  - `state.py` — added `migrate_state` tests (3 new)
+  - `config.py` — added `[quota]` defaults tests (2 new)
+  - `quota.py` — new module, 8 tests for `check_quotas`, `global_usage_gb`, `global_quota_exceeded`
+  - `bandwidth.py` — added sparkline tests + quota integration tests (6 new)
+  - `app.py` — added tests for `/api/bandwidth/*`, `/vpn/toggle`, peer_new/edit `quota_gb` validation (18 new)
 
 ## [0.1.0] — 2026-06-24
 
