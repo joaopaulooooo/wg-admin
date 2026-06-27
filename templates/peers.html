@@ -55,10 +55,20 @@
           {{ peer.public_key[:16] }}…{{ peer.public_key[-4:] if peer.public_key else '' }}
         </dd>
 
-        {% if status and status.latest_handshake %}
-        <dt>handshake</dt>
-        <dd>{{ status.latest_handshake }}</dd>
-        {% endif %}
+        <dt>estado wg</dt>
+        <dd>
+          {% if not status %}<span style="color: var(--danger);">NÃO ENCONTRADO</span>
+            <div class="text-sm text-muted" style="margin-top: 4px; font-family: var(--font-mono); font-size: 0.7rem;">
+              wg show tem:<br>
+              {% for k in pv.wg_pubkeys %}• {{ k[:20] }}…<br>{% endfor %}
+              {% if not pv.wg_pubkeys %}• (vazio){% endif %}
+            </div>
+          {% elif status.latest_handshake > 0 %}
+            handshake há {{ (now_ts - status.latest_handshake) if now_ts is defined else '?' }}s
+          {% else %}
+            sem handshake
+          {% endif %}
+        </dd>
 
         <dt>30 dias</dt>
         <dd>↓ {{ bw.thirty_day_rx }} · ↑ {{ bw.thirty_day_tx }}</dd>

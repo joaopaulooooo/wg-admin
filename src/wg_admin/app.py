@@ -181,12 +181,18 @@ def create_app() -> Flask:
         now_ts = int(_time.time())
         ONLINE_WINDOW = 180  # WireGuard re-handshake interval
 
+        # Build a normalized lookup (strip whitespace) for fuzzy match
+        normalized_statuses = {k.strip(): v for k, v in statuses_by_key.items()}
+
         bw = bandwidth.load_bandwidth(BANDWIDTH_PATH)
         peer_views = []
         connected_count = 0
         for peer in s["peers"]:
-            pub = peer.get("public_key", "")
+            pub = peer.get("public_key", "").strip()
+            # Try exact match first, then normalized (whitespace-insensitive)
             status = statuses_by_key.get(pub)
+            if status is None and pub:
+                status = normalized_statuses.get(pub)
             is_online = bool(
                 status
                 and status.latest_handshake
@@ -194,16 +200,12 @@ def create_app() -> Flask:
             )
             if is_online:
                 connected_count += 1
-            if not status and pub:
-                app.logger.warning(
-                    "peer %r not matched in wg show. state pubkey=%r (len=%d). wg show keys=%s",
-                    peer.get("name"), pub, len(pub), [f"{k!r}(len={len(k)})" for k in statuses_by_key.keys()]
-                )
             bw_stats = bandwidth.get_peer_stats(bw, pub)
             peer_views.append({
                 "peer": peer,
                 "status": status,
                 "is_online": is_online,
+                "wg_pubkeys": list(statuses_by_key.keys()),
                 "bandwidth": {
                     "total_rx": bandwidth.format_bytes(bw_stats["total_rx"]),
                     "total_tx": bandwidth.format_bytes(bw_stats["total_tx"]),
@@ -219,6 +221,7 @@ def create_app() -> Flask:
             connected_count=connected_count,
             total_peers=len(s["peers"]),
             imported_count=sum(1 for p in s["peers"] if not p.get("private_key_enc")),
+            now_ts=now_ts,
         )
 
     @app.route("/peers/new", methods=["GET", "POST"])
