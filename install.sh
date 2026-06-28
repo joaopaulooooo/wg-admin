@@ -702,6 +702,42 @@ elif [[ ! "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   # Stop wg-admin se já estiver a correr (para libertar porta se for 80/443)
   systemctl stop wg-admin.service 2>/dev/null || true
 
+  # certbot standalone (HTTP-01) precisa da porta 80/tcp aberta. Se a porta do
+  # painel for outra, abrimos 80 temporariamente e fechamos no fim — só a porta
+  # do painel persiste. Se a porta do painel for 80, deixamos ficar (a linha
+  # ufw/firewalld mais abaixo também a abre permanentemente).
+  OPENED_80_UFW=0
+  OPENED_80_FMD=0
+  cleanup_port_80() {
+    [[ "$PORT" == "80" ]] && return
+    if [[ "$OPENED_80_UFW" == "1" ]]; then
+      info "ufw — a fechar 80/tcp temporária (pós-certbot)"
+      ufw delete allow 80/tcp 2>/dev/null || true
+      OPENED_80_UFW=0
+    fi
+    if [[ "$OPENED_80_FMD" == "1" ]]; then
+      info "firewalld — a fechar 80/tcp temporária (pós-certbot)"
+      firewall-cmd --remove-port=80/tcp 2>/dev/null || true
+      OPENED_80_FMD=0
+    fi
+  }
+  trap cleanup_port_80 EXIT
+
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+    if ! ufw status 2>/dev/null | grep -qE "(^|[^0-9])80/tcp"; then
+      info "ufw ativo — a abrir 80/tcp para o Let's Encrypt"
+      ufw allow 80/tcp || true
+      OPENED_80_UFW=1
+    fi
+  fi
+  if command -v firewall-cmd >/dev/null && firewall-cmd --state 2>/dev/null | grep -q "running"; then
+    if ! firewall-cmd --list-ports 2>/dev/null | tr ' ' '\n' | grep -qx "80/tcp"; then
+      info "firewalld ativo — a abrir 80/tcp para o Let's Encrypt"
+      firewall-cmd --add-port=80/tcp 2>/dev/null || true
+      OPENED_80_FMD=1
+    fi
+  fi
+
   info "A pedir certificado a Let's Encrypt para $HOST..."
   if certbot certonly --standalone \
        --non-interactive \
@@ -715,6 +751,9 @@ elif [[ ! "$HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   else
     info "certbot falhou — vou gerar self-signed como fallback"
   fi
+
+  cleanup_port_80
+  trap - EXIT
 fi
 
 # Self-signed fallback (para IP ou certbot falhado)
