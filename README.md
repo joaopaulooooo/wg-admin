@@ -3,7 +3,7 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-161-brightgreen)
+![Tests](https://img.shields.io/badge/tests-170-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
@@ -29,7 +29,8 @@ Minimal WireGuard peer management panel for Linux servers. Python + Flask + syst
 ### Security
 - **Single admin password** (Argon2id, m=16MB/t=3/p=1)
 - **Change password** page in UI
-- **File-based rate limiting** — 5 fails / 5 min block, survives across processes
+- **File-based rate limiting** — 5 fails / 30 min IP block, survives across processes
+- **Auth attempt log** — successful and failed logins written as JSON lines to `/wg-admin/secrets/auth.log`, rotates at 100 KB (5 backups kept)
 - **CSRF tokens** on every state-changing POST
 - **Encrypted state at rest**: AES-256-GCM with HKDF-SHA256 key derivation
 - **Per-peer private key encryption** with domain-separated HKDF info
@@ -120,7 +121,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-161 tests, 89% coverage.
+170 tests, 89% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -136,7 +137,8 @@ src/wg_admin/
 ├── state.py      # Encrypted state load/save, schema migration, IP allocation, per-peer key encryption
 ├── wg.py         # Subprocess wrappers + parser, apply_state_to_wg, wg_syncconf, wg_interface_active
 ├── confgen.py    # .conf + QR code generation
-└── ratelimit.py  # File-based IP throttling
+├── ratelimit.py  # File-based IP throttling (5 fails / 30 min block)
+└── authlog.py    # Rotating JSON-lines auth attempt log
 
 templates/        # Jinja2: base, login, peers, peer_form, peer_edit, change_password, error
 static/           # NOC-at-night CSS (style.css)
@@ -145,7 +147,7 @@ static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 161 tests, integration smoke test
+tests/            # 170 tests, integration smoke test
 docs/             # specs, plans, smoke test checklist
 .github/          # CI workflow, issue/PR templates
 ```

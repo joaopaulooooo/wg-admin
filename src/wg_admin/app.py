@@ -12,13 +12,14 @@ from flask import (
     session, url_for,
 )
 
-from . import bandwidth, confgen, config, crypto, ratelimit, state, wg
+from . import authlog, bandwidth, confgen, config, crypto, ratelimit, state, wg
 
 # These paths are patched in tests via monkeypatch.
 SECRETS_DIR = Path("/wg-admin/secrets")
 STATE_PATH = Path("/wg-admin/state.json.enc")
 CONFIG_PATH = Path("/wg-admin/config.ini")
 RATELIMIT_PATH = Path("/wg-admin/secrets/auth_ratelimit.json")
+AUTHLOG_PATH = Path("/wg-admin/secrets/auth.log")
 BANDWIDTH_PATH = Path("/wg-admin/bandwidth.json")
 
 
@@ -112,13 +113,22 @@ def create_app() -> Flask:
                     phc_hash = line.split("=", 1)[1].strip()
                     break
 
+            user_agent = request.headers.get("User-Agent", "")
             if crypto.verify_password(password, phc_hash):
                 session["admin"] = True
                 session["csrf_token"] = pysecrets.token_urlsafe(32)
                 ratelimit.clear(RATELIMIT_PATH, client_ip)
+                authlog.log_attempt(
+                    AUTHLOG_PATH, success=True,
+                    client_ip=client_ip, user_agent=user_agent,
+                )
                 return redirect(url_for("peers_list"))
             else:
                 ratelimit.record_fail(RATELIMIT_PATH, client_ip)
+                authlog.log_attempt(
+                    AUTHLOG_PATH, success=False,
+                    client_ip=client_ip, user_agent=user_agent,
+                )
                 flash("Credenciais inválidas", "error")
         return render_template("login.html")
 

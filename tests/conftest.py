@@ -15,6 +15,7 @@ def workdir(tmp_path, monkeypatch):
     state_path = tmp_path / "state.json.enc"
     config_path = tmp_path / "config.ini"
     ratelimit_path = secrets_dir / "auth_ratelimit.json"
+    authlog_path = secrets_dir / "auth.log"
 
     (secrets_dir / "master.key").write_bytes(os.urandom(32))
     (secrets_dir / "session.key").write_bytes(os.urandom(32))
@@ -27,6 +28,7 @@ def workdir(tmp_path, monkeypatch):
     monkeypatch.setattr("wg_admin.app.STATE_PATH", state_path)
     monkeypatch.setattr("wg_admin.app.CONFIG_PATH", config_path)
     monkeypatch.setattr("wg_admin.app.RATELIMIT_PATH", ratelimit_path)
+    monkeypatch.setattr("wg_admin.app.AUTHLOG_PATH", authlog_path)
 
     return {
         "tmp_path": tmp_path,
@@ -34,6 +36,7 @@ def workdir(tmp_path, monkeypatch):
         "state_path": state_path,
         "config_path": config_path,
         "ratelimit_path": ratelimit_path,
+        "authlog_path": authlog_path,
     }
 
 

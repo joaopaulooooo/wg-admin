@@ -26,6 +26,26 @@ def test_login_with_wrong_password_shows_error(client):
     assert b"invalid" in r.data.lower() or b"credenciais" in r.data.lower()
 
 
+def test_failed_login_is_logged(client, workdir):
+    log_path = workdir["authlog_path"]
+    client.post("/login", data={"password": "wrong"},
+                headers={"User-Agent": "TestAgent/1.0"})
+    entries = [json.loads(l) for l in log_path.read_text().splitlines() if l]
+    assert len(entries) == 1
+    assert entries[0]["success"] is False
+    assert entries[0]["user_agent"] == "TestAgent/1.0"
+
+
+def test_successful_login_is_logged(client, workdir):
+    log_path = workdir["authlog_path"]
+    client.post("/login", data={"password": "test-password"},
+                headers={"User-Agent": "TestAgent/2.0"})
+    entries = [json.loads(l) for l in log_path.read_text().splitlines() if l]
+    assert len(entries) == 1
+    assert entries[0]["success"] is True
+    assert entries[0]["user_agent"] == "TestAgent/2.0"
+
+
 def test_logout_clears_session(client):
     client.post("/login", data={"password": "test-password"})
     r = client.post("/logout")

@@ -11,7 +11,7 @@ from typing import Iterator
 
 THRESHOLD = 5            # failed attempts before block
 WINDOW_SEC = 60          # window for counting fails
-BLOCK_SEC = 300          # 5 minutes
+BLOCK_SEC = 1800         # 30 minutes
 ENTRY_EXPIRY_SEC = 3600  # entries cleaned up after 1h of inactivity
 
 

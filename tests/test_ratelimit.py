@@ -56,3 +56,18 @@ def test_block_expires_after_window(monkeypatch, tmp_path):
     state["1.2.3.4"]["blocked_until"] = time.time() - 1  # expired
     ratelimit._save(rl_path, state)
     assert ratelimit.is_blocked(rl_path, "1.2.3.4") is False
+
+
+def test_block_duration_is_30_minutes(tmp_path):
+    """After threshold, blocked_until must be ~30 minutes in the future."""
+    rl_path = tmp_path / "rl.json"
+    before = time.time()
+    for _ in range(5):
+        ratelimit.record_fail(rl_path, "1.2.3.4")
+    after = time.time()
+    state = ratelimit._load(rl_path)
+    blocked_until = state["1.2.3.4"]["blocked_until"]
+    # Block window must be 30 min, allowing for the small elapsed time of the test.
+    assert blocked_until >= before + ratelimit.BLOCK_SEC - 1
+    assert blocked_until <= after + ratelimit.BLOCK_SEC + 1
+    assert ratelimit.BLOCK_SEC == 1800

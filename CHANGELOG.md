@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Auth attempt log** — successful and failed logins written as JSON lines (`ts`, `iso`, `success`, `ip`, `user_agent`) to `/wg-admin/secrets/auth.log`. Rotates at 100 KB, keeping up to 5 backups (`auth.log.1` … `auth.log.5`).
 - **Per-peer bandwidth quotas** — set `quota_gb` on each peer to auto-suspend when rolling 30-day usage exceeds the limit. Re-enables automatically when usage drops below.
 - **Global bandwidth quota** — `[quota] global_quota_gb` in config.ini. Sidebar shows rolling 30-day total. Red banner when exceeded.
 - **VPN kill switch** — sidebar button to stop/start `wg-quick@wg0` for emergencies.
@@ -16,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **GitHub repo link** in the sidebar footer (opens in new tab with `rel="noopener"`).
 
 ### Changed
+- **Rate-limit block window increased from 5 min to 30 min** — 5 failed attempts within 60 s now blocks the source IP for 30 minutes instead of 5. Persists across socket-activated restarts as before.
 - **Removed the warning banner** from the peers list page (`/peers`). The "wg-quick
   restart disconnects active peers" warning now only shows on the create-peer form,
   where it's contextually relevant.
@@ -30,13 +32,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`install.sh` now runs `systemctl enable wg-quick@wg0`** (previously only `start`) so the VPN auto-starts on reboot. Also installs a systemd drop-in at `/etc/systemd/system/wg-quick@wg0.service.d/10-wait-for-network.conf` that adds `After=network-online.target` + `ExecStartPre=/bin/sleep 3` to avoid boot races where the interface tries to come up before the network is fully ready.
 
 ### Tests
-- 161 total (up from 116), 89% coverage across:
-  - `wg.py` — added tests for `wg_syncconf`, `wg_interface_active`, `apply_state_to_wg(mode=...)` (8 new)
-  - `state.py` — added `migrate_state` tests (3 new)
-  - `config.py` — added `[quota]` defaults tests (2 new)
-  - `quota.py` — new module, 8 tests for `check_quotas`, `global_usage_gb`, `global_quota_exceeded`
-  - `bandwidth.py` — added sparkline tests + quota integration tests (6 new)
-  - `app.py` — added tests for `/api/bandwidth/*`, `/vpn/toggle`, peer_new/edit `quota_gb` validation (18 new)
+- 170 total (up from 161), 89% coverage across:
+  - `authlog.py` — new module, 6 tests for write / append / rotation / shift
+  - `ratelimit.py` — added test asserting `BLOCK_SEC == 1800`
+  - `app.py` — added tests asserting successful and failed logins are logged
 
 ## [0.1.0] — 2026-06-24
 
