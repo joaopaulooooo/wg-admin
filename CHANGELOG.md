@@ -27,6 +27,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Unauthenticated POSTs redirect to login instead of 403** — CSRF check now skips when there's no session, letting `login_required` handle the redirect.
 - **State schema gained 3 fields per peer**: `quota_gb` (float, 0=unlimited), `quota_suspended` (bool), `quota_state_updated_at` (ISO 8601 or None). Migration runs idempotently on every `load_state` via `setdefault`.
 - **`config.ini` gained `[quota]` section** with `global_quota_gb` default `0` (unlimited).
+- **`install.sh` now runs `systemctl enable wg-quick@wg0`** (previously only `start`) so the VPN auto-starts on reboot. Also installs a systemd drop-in at `/etc/systemd/system/wg-quick@wg0.service.d/10-wait-for-network.conf` that adds `After=network-online.target` + `ExecStartPre=/bin/sleep 3` to avoid boot races where the interface tries to come up before the network is fully ready.
 
 ### Tests
 - 161 total (up from 116), 89% coverage across:

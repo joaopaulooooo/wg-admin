@@ -1096,14 +1096,18 @@ details p {
 /* === SIDEBAR VPN KILL SWITCH === */
 .sidebar-vpn {
   margin: 1rem 0;
-  padding-top: 1rem;
+  padding: 1rem 0.75rem;
   border-top: 1px solid var(--border-subtle);
 }
 .sidebar-vpn .vpn-status {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
   font-size: 0.85rem;
   color: var(--text-secondary);
 }
@@ -1121,9 +1125,14 @@ details p {
   background: var(--text-muted);
 }
 .sidebar-vpn .quota-display {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
   font-family: var(--font-mono);
   font-size: 0.85rem;
-  margin-bottom: 0.5rem;
   color: var(--text-secondary);
 }
 .sidebar-vpn .quota-display.danger {

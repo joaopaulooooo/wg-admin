@@ -218,10 +218,25 @@ EOF
   # Stop primeiro caso esteja meio-up de tentativas anteriores
   systemctl stop wg-quick@wg0 2>/dev/null || true
   ip link del wg0 2>/dev/null || true
+
+  # Drop-in: arrancar só depois da rede estar online (evita race no boot)
+  mkdir -p /etc/systemd/system/wg-quick@wg0.service.d
+  cat > /etc/systemd/system/wg-quick@wg0.service.d/10-wait-for-network.conf <<'EOF'
+[Unit]
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStartPre=/bin/sleep 3
+EOF
+  systemctl daemon-reload
+
+  # Enable + start (enable garante auto-start no boot)
+  systemctl enable wg-quick@wg0
   systemctl start wg-quick@wg0
   sleep 1
   if systemctl is-active --quiet wg-quick@wg0; then
-    info "WireGuard a correr"
+    info "WireGuard a correr (auto-start no boot: ativado)"
   else
     err "wg-quick não arrancou — ver logs: journalctl -u wg-quick@wg0 -e"
   fi
