@@ -770,7 +770,7 @@ GUNICORN_TLS_ARGS=""
 if [[ -n "$CERT_PATH" ]]; then
   GUNICORN_TLS_ARGS=" --certfile $CERT_PATH --keyfile $KEY_PATH"
 fi
-GUNICORN_EXEC="$INSTALL_DIR/venv/bin/gunicorn --bind 0.0.0.0:$PORT --workers 4 --timeout 60 --access-logfile - --error-logfile -$GUNICORN_TLS_ARGS wg_admin.app:create_app"
+GUNICORN_EXEC="$INSTALL_DIR/venv/bin/gunicorn --bind 0.0.0.0:$PORT --workers 4 --timeout 60 --access-logfile - --error-logfile -$GUNICORN_TLS_ARGS 'wg_admin.app:create_app()'"
 {
   echo "[Unit]"
   echo "Description=wg-admin Flask service (gunicorn)"

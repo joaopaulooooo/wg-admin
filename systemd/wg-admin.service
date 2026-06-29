@@ -10,7 +10,7 @@ User=root
 WorkingDirectory=/wg-admin
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/wg-admin/src
-ExecStart=/wg-admin/venv/bin/gunicorn --bind 0.0.0.0:443 --workers 4 --timeout 60 --access-logfile - --error-logfile - wg_admin.app:create_app
+ExecStart=/wg-admin/venv/bin/gunicorn --bind 0.0.0.0:443 --workers 4 --timeout 60 --access-logfile - --error-logfile - 'wg_admin.app:create_app()'
 Restart=on-failure
 RestartSec=5
 
