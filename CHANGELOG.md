@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Production WSGI server (gunicorn)** — replaced the single-threaded Werkzeug dev server with gunicorn (4 workers). Werkzeug's accept queue was filling under internet scanner load, silently dropping new SYNs even from legitimate admins. Gunicorn workers accept connections in parallel, eliminating the bottleneck.
 - **Auth attempt log** — successful and failed logins written as JSON lines (`ts`, `iso`, `success`, `ip`, `user_agent`) to `/wg-admin/secrets/auth.log`. Rotates at 100 KB, keeping up to 5 backups (`auth.log.1` … `auth.log.5`).
 - **Per-peer bandwidth quotas** — set `quota_gb` on each peer to auto-suspend when rolling 30-day usage exceeds the limit. Re-enables automatically when usage drops below.
 - **Global bandwidth quota** — `[quota] global_quota_gb` in config.ini. Sidebar shows rolling 30-day total. Red banner when exceeded.
@@ -18,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - **Rate-limit block window increased from 5 min to 30 min** — 5 failed attempts within 60 s now blocks the source IP for 30 minutes instead of 5. Persists across socket-activated restarts as before.
+- **Last-handshake time on the peers card now formats as `s`/`min`/`h`/`d`** instead of always showing seconds (e.g. "há 5min" instead of "há 300s"). Falls through `60s → 1min`, `3600s → 1h`, `86400s → 1d`.
 - **Removed the warning banner** from the peers list page (`/peers`). The "wg-quick
   restart disconnects active peers" warning now only shows on the create-peer form,
   where it's contextually relevant.
@@ -32,7 +34,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`install.sh` now runs `systemctl enable wg-quick@wg0`** (previously only `start`) so the VPN auto-starts on reboot. Also installs a systemd drop-in at `/etc/systemd/system/wg-quick@wg0.service.d/10-wait-for-network.conf` that adds `After=network-online.target` + `ExecStartPre=/bin/sleep 3` to avoid boot races where the interface tries to come up before the network is fully ready.
 
 ### Tests
-- 170 total (up from 161), 89% coverage across:
+- 172 total (up from 170), 89% coverage across:
+  - `app.py` — added tests for the `format_duration` filter (10 cases: seconds/minutes/hours/days boundaries + non-numeric pass-through)
+- Previous: 170 total (up from 161), 89% coverage across:
   - `authlog.py` — new module, 6 tests for write / append / rotation / shift
   - `ratelimit.py` — added test asserting `BLOCK_SEC == 1800`
   - `app.py` — added tests asserting successful and failed logins are logged

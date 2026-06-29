@@ -23,6 +23,24 @@ AUTHLOG_PATH = Path("/wg-admin/secrets/auth.log")
 BANDWIDTH_PATH = Path("/wg-admin/bandwidth.json")
 
 
+def format_duration(seconds):
+    """Format seconds as a coarse human duration: 30s, 5min, 3h, 2d.
+
+    Non-numeric input (None, '?') is passed through unchanged so templates
+    can use the filter defensively without extra guards.
+    """
+    if not isinstance(seconds, (int, float)):
+        return seconds
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}min"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
 def create_app() -> Flask:
     app = Flask(
         __name__,
@@ -92,6 +110,8 @@ def create_app() -> Flask:
                 return redirect(url_for("login"))
             return f(*args, **kwargs)
         return wrapper
+
+    app.jinja_env.filters["duration"] = format_duration
 
     @app.route("/")
     @login_required

@@ -1,6 +1,5 @@
 [Unit]
-Description=wg-admin Flask service
-Requires=wg-admin.socket
+Description=wg-admin Flask service (gunicorn)
 After=network.target
 StartLimitIntervalSec=60
 StartLimitBurst=30
@@ -10,7 +9,8 @@ Type=exec
 User=root
 WorkingDirectory=/wg-admin
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/wg-admin/venv/bin/python -m wg_admin.app
+Environment=PYTHONPATH=/wg-admin/src
+ExecStart=/wg-admin/venv/bin/gunicorn --bind 0.0.0.0:443 --workers 4 --timeout 60 --access-logfile - --error-logfile - wg_admin.app:create_app
 Restart=on-failure
 RestartSec=5
 

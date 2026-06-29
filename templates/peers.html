@@ -73,7 +73,7 @@
               {% if not pv.wg_pubkeys %}• (vazio){% endif %}
             </div>
           {% elif status.latest_handshake > 0 %}
-            handshake há {{ (now_ts - status.latest_handshake) if now_ts is defined else '?' }}s
+            handshake há {{ (now_ts - status.latest_handshake) | duration }}
           {% else %}
             sem handshake
           {% endif %}

@@ -54,6 +54,27 @@ def test_logout_clears_session(client):
     assert "/login" in r2.headers["Location"]
 
 
+def test_duration_filter_formats_seconds():
+    from wg_admin.app import format_duration
+    assert format_duration(5) == "5s"
+    assert format_duration(59) == "59s"
+    assert format_duration(60) == "1min"
+    assert format_duration(120) == "2min"
+    assert format_duration(3599) == "59min"
+    assert format_duration(3600) == "1h"
+    assert format_duration(7200) == "2h"
+    assert format_duration(86399) == "23h"
+    assert format_duration(86400) == "1d"
+    assert format_duration(172800) == "2d"
+
+
+def test_duration_filter_passes_through_non_numeric():
+    from wg_admin.app import format_duration
+    assert format_duration(None) is None
+    assert format_duration("?") == "?"
+    assert format_duration("") == ""
+
+
 def test_peers_list_shows_existing_peers(client, workdir):
     from wg_admin import state as state_mod
     s = state_mod.empty_state()

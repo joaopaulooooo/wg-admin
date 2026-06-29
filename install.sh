@@ -758,37 +758,22 @@ if [[ -z "$CERT_PATH" ]]; then
   TLS_TYPE="self-signed"
 fi
 
-# --- run.py: entry point that reads TLS from env ---
-info "Writing run.py entry point"
-cat > "$INSTALL_DIR/run.py" <<'PYEOF'
-#!/usr/bin/env python3
-"""Production entry point — reads port + TLS paths from env."""
-import os
-import sys
-sys.path.insert(0, "/wg-admin/src")
-
-from wg_admin.app import create_app
-
-app = create_app()
-
-if __name__ == "__main__":
-    host = os.environ.get("WG_ADMIN_HOST", "0.0.0.0")
-    port = int(os.environ.get("WG_ADMIN_PORT", "51821"))
-    cert = os.environ.get("WG_ADMIN_CERT")
-    key = os.environ.get("WG_ADMIN_KEY")
-    if cert and key:
-        app.run(host=host, port=port, ssl_context=(cert, key))
-    else:
-        app.run(host=host, port=port)
-PYEOF
-chmod +x "$INSTALL_DIR/run.py"
-
-# --- systemd service unit (no socket activation — Flask listens directly) ---
+# --- systemd service unit (gunicorn, multiple workers) ---
 info "Installing systemd service"
+# Cleanup stale entry point from previous Werkzeug-based setup
+rm -f "$INSTALL_DIR/run.py"
 SERVICE_FILE="/etc/systemd/system/wg-admin.service"
+# Build the gunicorn ExecStart line. Workers handle accept() in parallel,
+# preventing the listen backlog from filling under scanner load (which
+# silently dropped new SYNs with the single-threaded Werkzeug dev server).
+GUNICORN_TLS_ARGS=""
+if [[ -n "$CERT_PATH" ]]; then
+  GUNICORN_TLS_ARGS=" --certfile $CERT_PATH --keyfile $KEY_PATH"
+fi
+GUNICORN_EXEC="$INSTALL_DIR/venv/bin/gunicorn --bind 0.0.0.0:$PORT --workers 4 --timeout 60 --access-logfile - --error-logfile -$GUNICORN_TLS_ARGS wg_admin.app:create_app"
 {
   echo "[Unit]"
-  echo "Description=wg-admin Flask service"
+  echo "Description=wg-admin Flask service (gunicorn)"
   echo "After=network.target"
   echo ""
   echo "[Service]"
@@ -797,12 +782,7 @@ SERVICE_FILE="/etc/systemd/system/wg-admin.service"
   echo "WorkingDirectory=$INSTALL_DIR"
   echo "Environment=PYTHONUNBUFFERED=1"
   echo "Environment=PYTHONPATH=$INSTALL_DIR/src"
-  echo "Environment=WG_ADMIN_PORT=$PORT"
-  if [[ -n "$CERT_PATH" ]]; then
-    echo "Environment=WG_ADMIN_CERT=$CERT_PATH"
-    echo "Environment=WG_ADMIN_KEY=$KEY_PATH"
-  fi
-  echo "ExecStart=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/run.py"
+  echo "ExecStart=$GUNICORN_EXEC"
   echo "Restart=on-failure"
   echo "RestartSec=5"
   echo ""

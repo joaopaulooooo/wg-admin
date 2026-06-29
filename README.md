@@ -3,7 +3,7 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-170-brightgreen)
+![Tests](https://img.shields.io/badge/tests-172-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
@@ -35,6 +35,7 @@ Minimal WireGuard peer management panel for Linux servers. Python + Flask + syst
 - **Encrypted state at rest**: AES-256-GCM with HKDF-SHA256 key derivation
 - **Per-peer private key encryption** with domain-separated HKDF info
 - **Atomic writes** with `flock` and rotated `.bak`/`.bak1` backups
+- **Gunicorn WSGI server** (4 workers) — replaces the single-threaded Werkzeug dev server, which silently dropped new connections once the accept queue filled under scanner load
 - **Hardened systemd unit** (`ProtectSystem=strict`, `RestrictAddressFamilies` with `AF_NETLINK` for wg access)
 
 ### Install experience
@@ -121,7 +122,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-170 tests, 89% coverage.
+172 tests, 89% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -129,7 +130,7 @@ CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — 
 
 ```
 src/wg_admin/
-├── app.py        # Flask factory, routes, auth, CSRF, rate limit, change-password, context processor
+├── app.py        # Flask factory, routes, auth, CSRF, rate limit, change-password, context processor, Jinja filters
 ├── bandwidth.py  # 5-min periodic sampler, daily buckets, 30-day retention, quota check
 ├── config.py     # Load config.ini with defaults (incl. [quota] section)
 ├── crypto.py     # HKDF-SHA256, AES-256-GCM, Argon2id
@@ -140,6 +141,10 @@ src/wg_admin/
 ├── ratelimit.py  # File-based IP throttling (5 fails / 30 min block)
 └── authlog.py    # Rotating JSON-lines auth attempt log
 
+Production runs through **gunicorn** (4 workers, defined in `install.sh`'s
+generated systemd unit and `systemd/wg-admin.service`). Flask's dev server
+is not used in production.
+
 templates/        # Jinja2: base, login, peers, peer_form, peer_edit, change_password, error
 static/           # NOC-at-night CSS (style.css)
 static/js/        # bandwidth-modal, whatsapp-modal, global-chart
@@ -147,7 +152,7 @@ static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 170 tests, integration smoke test
+tests/            # 172 tests, integration smoke test
 docs/             # specs, plans, smoke test checklist
 .github/          # CI workflow, issue/PR templates
 ```
