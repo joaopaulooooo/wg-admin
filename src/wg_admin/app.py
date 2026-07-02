@@ -12,7 +12,7 @@ from flask import (
     session, url_for,
 )
 
-from . import authlog, bandwidth, confgen, config, crypto, ratelimit, state, wg
+from . import authlog, bandwidth, confgen, config, crypto, ratelimit, serverstats, state, wg
 
 # These paths are patched in tests via monkeypatch.
 SECRETS_DIR = Path("/wg-admin/secrets")
@@ -489,6 +489,16 @@ def create_app() -> Flask:
             series.append({"name": "outros", "data": outros_per_day})
 
         return jsonify({"dates": dates, "series": series})
+
+    @app.route("/server-status")
+    @login_required
+    def server_status():
+        return render_template("server_status.html")
+
+    @app.route("/api/server-status")
+    @login_required
+    def api_server_status():
+        return jsonify(serverstats.collect(cfg))
 
     @app.route("/peers/<peer_id>/edit", methods=["GET", "POST"])
     @login_required

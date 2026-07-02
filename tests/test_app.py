@@ -610,3 +610,37 @@ def test_api_global_bandwidth_empty(client, workdir, monkeypatch):
     data = r.get_json()
     assert data["series"] == []
     assert len(data["dates"]) == 30
+
+
+def test_server_status_requires_auth(client):
+    r = client.get("/server-status")
+    assert r.status_code in (301, 302)
+    assert "/login" in r.headers["Location"]
+
+
+def test_server_status_page_returns_200(client):
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/server-status")
+    assert r.status_code == 200
+    assert b"server status" in r.data.lower()
+
+
+def test_api_server_status_requires_auth(client):
+    r = client.get("/api/server-status")
+    assert r.status_code in (301, 302)
+    assert "/login" in r.headers["Location"]
+
+
+def test_api_server_status_returns_json(client, monkeypatch):
+    from wg_admin import serverstats
+    monkeypatch.setattr(
+        serverstats, "collect",
+        lambda cfg: {"cpu_percent": 7.5, "mem_percent": 30.0}
+    )
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/api/server-status")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["cpu_percent"] == 7.5
+    assert data["mem_percent"] == 30.0
+

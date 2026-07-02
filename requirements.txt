@@ -5,3 +5,4 @@ qrcode>=7.0
 Pillow>=10.0
 itsdangerous>=2.1
 gunicorn>=21.0,<24.0
+psutil>=5.9

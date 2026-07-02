@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Server Status — wg-admin{% endblock %}
+{% block content %}
+<div class="container">
+  <h1><span class="accent-bar"></span>Server Status</h1>
+  <p class="subtitle">// live · refresh 5s · <span id="ss-last-updated">—</span></p>
+
+  <div class="metric-grid">
+    <div class="metric-card">
+      <div class="metric-head">
+        <span class="metric-label">CPU</span>
+        <span class="metric-sub" id="ss-cpu-sub">— cores</span>
+      </div>
+      <div class="quota-bar">
+        <div class="quota-fill" id="ss-cpu-fill" style="width: 0%"></div>
+        <div class="quota-text" id="ss-cpu-pct">—%</div>
+      </div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-head">
+        <span class="metric-label">MEMÓRIA</span>
+        <span class="metric-sub" id="ss-mem-sub">— / —</span>
+      </div>
+      <div class="quota-bar">
+        <div class="quota-fill" id="ss-mem-fill" style="width: 0%"></div>
+        <div class="quota-text" id="ss-mem-pct">—%</div>
+      </div>
+    </div>
+
+    <div class="metric-card metric-card-disks">
+      <div class="metric-head">
+        <span class="metric-label">DISCO</span>
+        <span class="metric-sub" id="ss-disks-count">— mounts</span>
+      </div>
+      <div id="ss-disks" class="disks-list">
+        <div class="metric-muted">carregando…</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-grid">
+    <div class="info-card">
+      <h2>Sistema</h2>
+      <dl class="info-dl">
+        <dt>HOSTNAME</dt><dd id="ss-hostname">—</dd>
+        <dt>UPTIME</dt><dd id="ss-uptime">—</dd>
+        <dt>LOAD AVG</dt><dd id="ss-load">—</dd>
+        <dt>KERNEL</dt><dd id="ss-kernel">—</dd>
+        <dt>ARCH</dt><dd id="ss-arch">—</dd>
+        <dt>IP PÚBLICO</dt><dd id="ss-public-ip">—</dd>
+      </dl>
+    </div>
+
+    <div class="info-card">
+      <h2>WireGuard <span id="ss-wg-status" class="wg-state">—</span></h2>
+      <dl class="info-dl">
+        <dt>PEERS ONLINE</dt><dd id="ss-wg-online">—</dd>
+        <dt>TOTAL PEERS</dt><dd id="ss-wg-total">—</dd>
+        <dt>RX TOTAL</dt><dd id="ss-wg-rx">—</dd>
+        <dt>TX TOTAL</dt><dd id="ss-wg-tx">—</dd>
+        <dt>RX RATE</dt><dd id="ss-wg-rx-rate">—</dd>
+        <dt>TX RATE</dt><dd id="ss-wg-tx-rate">—</dd>
+      </dl>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const REFRESH_MS = 5000;
+  let timer = null;
+
+  function fmtBytes(bytes) {
+    if (bytes == null) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
+    let v = bytes / 1024, i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(v >= 100 ? 0 : 1) + ' ' + units[i];
+  }
+
+  function fmtRate(bps) {
+    if (bps == null) return '—';
+    return fmtBytes(bps) + '/s';
+  }
+
+  function fmtUptime(seconds) {
+    if (seconds == null || seconds < 0) return '—';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'min';
+    return m + 'min';
+  }
+
+  function pctClass(pct) {
+    if (pct == null) return 'quota-ok';
+    if (pct >= 90) return 'quota-danger';
+    if (pct >= 70) return 'quota-warn';
+    return 'quota-ok';
+  }
+
+  function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  function applyMetric(id, pct, subText) {
+    const fill = document.getElementById(id + '-fill');
+    const txt = document.getElementById(id + '-pct');
+    if (fill) {
+      fill.className = 'quota-fill ' + pctClass(pct);
+      fill.style.width = (pct == null ? 0 : Math.min(100, pct)) + '%';
+    }
+    if (txt) txt.textContent = (pct == null ? '—' : pct.toFixed(1)) + '%';
+    if (subText !== undefined) setText(id + '-sub', subText);
+  }
+
+  function renderDisks(disks) {
+    const container = document.getElementById('ss-disks');
+    if (!container) return;
+    if (!disks || disks.length === 0) {
+      container.innerHTML = '<div class="metric-muted">sem discos físicos</div>';
+      return;
+    }
+    setText('ss-disks-count', disks.length + ' mount' + (disks.length > 1 ? 's' : ''));
+    container.innerHTML = disks.map(function(d) {
+      return '' +
+        '<div class="disk-row">' +
+          '<div class="disk-head">' +
+            '<span class="disk-mount">' + d.mount + '</span>' +
+            '<span class="disk-used">' + d.used_gb.toFixed(1) + ' / ' + d.total_gb.toFixed(1) + ' GB</span>' +
+          '</div>' +
+          '<div class="quota-bar disk-bar">' +
+            '<div class="quota-fill ' + pctClass(d.percent) + '" style="width: ' + Math.min(100, d.percent) + '%"></div>' +
+            '<div class="quota-text">' + d.percent.toFixed(0) + '%</div>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  function renderWg(wg) {
+    if (!wg) return;
+    const up = wg.interface_up;
+    const statusEl = document.getElementById('ss-wg-status');
+    if (statusEl) {
+      statusEl.textContent = up ? 'online' : 'down';
+      statusEl.className = 'wg-state ' + (up ? 'ok' : 'down');
+    }
+    setText('ss-wg-online', up ? wg.online_peers + ' / ' + wg.total_peers : '—');
+    setText('ss-wg-total', wg.total_peers);
+    setText('ss-wg-rx', up ? fmtBytes(wg.total_rx) : '—');
+    setText('ss-wg-tx', up ? fmtBytes(wg.total_tx) : '—');
+    setText('ss-wg-rx-rate', up ? fmtRate(wg.rx_rate_bps) : '—');
+    setText('ss-wg-tx-rate', up ? fmtRate(wg.tx_rate_bps) : '—');
+  }
+
+  function renderTime() {
+    const d = new Date();
+    const pad = function(n) { return n < 10 ? '0' + n : n; };
+    setText('ss-last-updated', 'atualizado ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()));
+  }
+
+  async function refresh() {
+    try {
+      const resp = await fetch('{{ url_for("api_server_status") }}', { cache: 'no-store' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+
+      applyMetric('ss-cpu', data.cpu_percent, (data.cpu_count || 0) + ' cores');
+      applyMetric('ss-mem', data.mem_percent,
+                  data.mem_used_gb.toFixed(1) + ' / ' + data.mem_total_gb.toFixed(1) + ' GB');
+      renderDisks(data.disks);
+
+      setText('ss-hostname', data.hostname || '—');
+      setText('ss-uptime', fmtUptime(data.uptime_seconds));
+      const load = data.load_avg || [];
+      setText('ss-load', load.length === 3
+        ? load.map(function(v) { return v.toFixed(2); }).join(' ')
+        : '—');
+      setText('ss-kernel', data.kernel || '—');
+      setText('ss-arch', data.arch || '—');
+      setText('ss-public-ip', data.public_ip || '—');
+
+      renderWg(data.wg);
+      renderTime();
+    } catch (e) {
+      setText('ss-last-updated', 'erro: ' + e.message);
+    }
+  }
+
+  function start() {
+    refresh();
+    timer = setInterval(refresh, REFRESH_MS);
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) {
+        if (timer) { clearInterval(timer); timer = null; }
+      } else if (!timer) {
+        refresh();
+        timer = setInterval(refresh, REFRESH_MS);
+      }
+    });
+  }
+
+  start();
+})();
+</script>
+{% endblock %}

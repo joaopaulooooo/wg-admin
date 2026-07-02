@@ -58,6 +58,10 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       <span>Password</span>
     </a>
+    <a href="{{ url_for('server_status') }}" class="sidebar-link {{ 'active' if request.endpoint == 'server_status' }}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="6" rx="1"/><rect x="3" y="15" width="18" height="6" rx="1"/><line x1="7" y1="6" x2="7.01" y2="6"/><line x1="7" y1="18" x2="7.01" y2="18"/></svg>
+      <span>Server Status</span>
+    </a>
   </nav>
 
   <div class="sidebar-footer">
