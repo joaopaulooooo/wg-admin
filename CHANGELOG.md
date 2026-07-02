@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Server Status page** (`/server-status`) — live system metrics for the host running wg-admin: CPU %, memory % + totals, per-mount disk usage, uptime, load average, hostname, kernel, arch, public IP, and a WireGuard card (peers online/total, rx/tx totals + rate). Auto-refreshes every 5 s via fetch, pauses when the tab is hidden. New sidebar link between Password and footer. Metrics collected via `psutil` (new dependency); disk partitions filtered to physical fstypes (excludes tmpfs/proc/sysfs). WG section degrades to `interface_up=false` when `wg0` is down. Network rate computed between consecutive samples kept module-level — first request after startup shows `—`, second shows the real value.
 - **Production WSGI server (gunicorn)** — replaced the single-threaded Werkzeug dev server with gunicorn (4 workers). Werkzeug's accept queue was filling under internet scanner load, silently dropping new SYNs even from legitimate admins. Gunicorn workers accept connections in parallel, eliminating the bottleneck.
 - **Auth attempt log** — successful and failed logins written as JSON lines (`ts`, `iso`, `success`, `ip`, `user_agent`) to `/wg-admin/secrets/auth.log`. Rotates at 100 KB, keeping up to 5 backups (`auth.log.1` … `auth.log.5`).
 - **Per-peer bandwidth quotas** — set `quota_gb` on each peer to auto-suspend when rolling 30-day usage exceeds the limit. Re-enables automatically when usage drops below.
@@ -34,7 +35,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`install.sh` now runs `systemctl enable wg-quick@wg0`** (previously only `start`) so the VPN auto-starts on reboot. Also installs a systemd drop-in at `/etc/systemd/system/wg-quick@wg0.service.d/10-wait-for-network.conf` that adds `After=network-online.target` + `ExecStartPre=/bin/sleep 3` to avoid boot races where the interface tries to come up before the network is fully ready.
 
 ### Tests
-- 172 total (up from 170), 89% coverage across:
+- 185 total (up from 172), 90% coverage across:
+  - `serverstats.py` — new module, 9 tests covering CPU/MEM/disk collection, tmpfs filtering, unreadable mounts, wg-down degradation, network rate first/second-call delta, online-peer counting, public IP fallback, uptime
+  - `app.py` — added 4 route tests for `/server-status` and `/api/server-status` (auth required + JSON response shape)
+- Previous: 172 total (up from 170), 89% coverage across:
   - `app.py` — added tests for the `format_duration` filter (10 cases: seconds/minutes/hours/days boundaries + non-numeric pass-through)
 - Previous: 170 total (up from 161), 89% coverage across:
   - `authlog.py` — new module, 6 tests for write / append / rotation / shift

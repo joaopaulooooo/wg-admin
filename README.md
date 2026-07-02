@@ -3,8 +3,8 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-172-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-185-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
 ## Features
@@ -25,6 +25,7 @@ Minimal WireGuard peer management panel for Linux servers. Python + Flask + syst
 - **Global quota**: warning banner when total exceeds limit
 - **VPN kill switch**: stop/start the entire VPN from the sidebar
 - **Live charts**: sparkline per card, modal per peer, global stacked chart at top of /peers
+- **Server Status page**: live CPU %, memory, per-mount disk usage, uptime, load average, hostname/kernel/arch, public IP, and WireGuard stats (peers online/total, rx/tx totals + rate). Auto-refreshes every 5 s, pauses on hidden tab.
 
 ### Security
 - **Single admin password** (Argon2id, m=16MB/t=3/p=1)
@@ -122,7 +123,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-172 tests, 89% coverage.
+185 tests, 90% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -139,20 +140,21 @@ src/wg_admin/
 ├── wg.py         # Subprocess wrappers + parser, apply_state_to_wg, wg_syncconf, wg_interface_active
 ├── confgen.py    # .conf + QR code generation
 ├── ratelimit.py  # File-based IP throttling (5 fails / 30 min block)
-└── authlog.py    # Rotating JSON-lines auth attempt log
+├── authlog.py    # Rotating JSON-lines auth attempt log
+└── serverstats.py # CPU/MEM/disk/uptime/load/wg snapshot for /server-status
 
 Production runs through **gunicorn** (4 workers, defined in `install.sh`'s
 generated systemd unit and `systemd/wg-admin.service`). Flask's dev server
 is not used in production.
 
-templates/        # Jinja2: base, login, peers, peer_form, peer_edit, change_password, error
+templates/        # Jinja2: base, login, peers, peer_form, peer_edit, change_password, server_status, error
 static/           # NOC-at-night CSS (style.css)
 static/js/        # bandwidth-modal, whatsapp-modal, global-chart
 static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 172 tests, integration smoke test
+tests/            # 185 tests, integration smoke test
 docs/             # specs, plans, smoke test checklist
 .github/          # CI workflow, issue/PR templates
 ```
