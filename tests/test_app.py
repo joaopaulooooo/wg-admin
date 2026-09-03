@@ -644,3 +644,95 @@ def test_api_server_status_returns_json(client, monkeypatch):
     assert data["cpu_percent"] == 7.5
     assert data["mem_percent"] == 30.0
 
+
+
+def _seed_imported_peer(workdir, client, peer_id="imp00001", name="Imported"):
+    from wg_admin import state as state_mod
+    s = state_mod.empty_state()
+    s["peers"] = [{
+        "id": peer_id,
+        "name": name,
+        "public_key": "OLDPUB",
+        "ip": "10.0.0.5",
+        "disabled": False,
+        "created_at": "2026-06-17T00:00:00Z",
+    }]
+    state_mod.save_state(workdir["state_path"], s, client.application.config["MASTER_KEY"])
+
+
+def _login_csrf(client):
+    client.post("/login", data={"password": "test-password"})
+    with client.session_transaction() as sess:
+        return sess["csrf_token"]
+
+
+def test_imported_peer_shows_generate_keys_button(client, workdir):
+    _seed_imported_peer(workdir, client)
+    _login_csrf(client)
+    r = client.get("/peers")
+    assert r.status_code == 200
+    assert b"Gerar chaves" in r.data
+    # wg-admin created peers don't get the button (they already have keys)
+    assert b"Peer importado" not in r.data
+
+
+def test_regenerate_imported_peer_creates_keys_and_unlocks_conf(client, workdir, monkeypatch):
+    from wg_admin import wg as wg_mod
+    from wg_admin import state as state_mod
+    monkeypatch.setattr(wg_mod, "wg_genkey", lambda: ("NEWPRIV=", "NEWPUB="))
+    applied = []
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", lambda s, cfg, mode="syncconf": applied.append(mode))
+    _seed_imported_peer(workdir, client)
+    csrf = _login_csrf(client)
+
+    r = client.post("/peers/imp00001/regenerate", data={"csrf_token": csrf})
+    assert r.status_code in (301, 302)
+    assert applied == ["syncconf"]
+
+    s = state_mod.load_state(workdir["state_path"], client.application.config["MASTER_KEY"])
+    p = s["peers"][0]
+    assert p["public_key"] == "NEWPUB="
+    assert p.get("private_key_enc")
+
+    # .conf and QR now downloadable
+    r = client.get("/peers/imp00001/conf")
+    assert r.status_code == 200
+    assert b"[Interface]" in r.data
+    r = client.get("/peers/imp00001/qr")
+    assert r.status_code == 200
+
+
+def test_regenerate_works_for_created_peer_rotation_too(client, workdir, monkeypatch):
+    from wg_admin import wg as wg_mod
+    from wg_admin import state as state_mod
+    monkeypatch.setattr(wg_mod, "wg_genkey", lambda: ("ROTPRIV=", "ROTPUB="))
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", lambda s, cfg, mode="syncconf": None)
+    _seed_peer(workdir, client, name="RotateMe")
+    csrf = _login_csrf(client)
+    r = client.post("/peers/abc12345/regenerate", data={"csrf_token": csrf})
+    assert r.status_code in (301, 302)
+    s = state_mod.load_state(workdir["state_path"], client.application.config["MASTER_KEY"])
+    assert s["peers"][0]["public_key"] == "ROTPUB="
+
+
+def test_regenerate_requires_login(client):
+    r = client.post("/peers/abc12345/regenerate", data={})
+    assert r.status_code in (301, 302)
+    assert "/login" in r.headers["Location"]
+
+
+def test_regenerate_unknown_peer_404(client, workdir, monkeypatch):
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", lambda s, cfg, mode="syncconf": None)
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("P=", "PUB="))
+    csrf = _login_csrf(client)
+    r = client.post("/peers/zzz99999/regenerate", data={"csrf_token": csrf})
+    assert r.status_code == 404
+
+
+def test_created_peer_shows_rotate_key_button(client, workdir):
+    _seed_peer(workdir, client, name="WgAdminCreated")
+    _login_csrf(client)
+    r = client.get("/peers")
+    assert r.status_code == 200
+    assert b"Rodar chave" in r.data
+    assert b"Gerar chaves" not in r.data

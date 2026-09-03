@@ -489,12 +489,32 @@ h1 .accent-bar {
   word-break: break-all;
 }
 
+/* Inline form buttons — two standardized rows with uniform height */
 .peer-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 0.4rem;
   padding-top: 0.85rem;
   border-top: 1px dashed var(--border-subtle);
+}
+.peer-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+.peer-actions-row form {
+  display: contents;
+}
+.peer-actions-row > a.btn,
+.peer-actions-row > form > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.15rem;
+  padding: 0 0.9rem;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 /* === BUTTONS === */
@@ -557,16 +577,6 @@ button.danger:hover {
   background: rgba(239, 68, 68, 0.1);
   border-color: var(--danger);
   box-shadow: 0 2px 12px var(--danger-glow);
-}
-
-/* Inline form buttons (toggle, delete) */
-.peer-actions form {
-  display: inline;
-  margin: 0;
-}
-.peer-actions button {
-  padding: 0.35rem 0.65rem;
-  font-size: 0.78rem;
 }
 
 /* === FORMS === */

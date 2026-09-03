@@ -48,7 +48,7 @@
         <h3 class="peer-name">
           {{ peer.name }}
           {% if peer.disabled %}<em>(inativo)</em>{% endif %}
-          {% if not peer.private_key_enc %}<em title="Chave privada não disponível — importado do wg0.conf">🔒</em>{% endif %}
+          {% if not peer.private_key_enc %}<em title="Importado do wg0.conf — usa 'Gerar chaves' para desbloquear .conf/QR">🔒</em>{% endif %}
         </h3>
         <span class="peer-status {{ 'inactive' if peer.disabled or not pv.is_online else '' }}">
           {% if peer.disabled %}inativo{% elif pv.is_online %}online{% else %}offline{% endif %}
@@ -118,33 +118,35 @@
       {% endif %}
 
       <div class="peer-actions">
-        {% if peer.private_key_enc %}
-        <a href="{{ url_for('peer_conf', peer_id=peer.id) }}" class="btn secondary">.conf</a>
-        <a href="{{ url_for('peer_qr', peer_id=peer.id) }}"
-           class="btn secondary qr-trigger"
-           data-peer-name="{{ peer.name }}"
-           data-qr-url="{{ url_for('peer_qr', peer_id=peer.id) }}"
-           data-conf-url="{{ url_for('peer_conf', peer_id=peer.id) }}">
-          QR
-        </a>
-        <a href="#" class="btn secondary wa-trigger"
-           data-peer-id="{{ peer.id }}"
-           data-peer-name="{{ peer.name }}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M17.5 14.4c-.3-.1-1.7-.9-2-1-.3-.1-.5-.1-.7.1-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-1.8-.9-3-1.6-4.2-3.6-.3-.5.3-.5.9-1.6.1-.2 0-.4 0-.5-.1-.2-.7-1.7-1-2.3-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5 4.5 1.9.8 2.6.9 3.5.8.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.4-.1-.2-.3-.2-.6-.4z"/>
-            <path d="M12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.5.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2zm0 18.3c-1.5 0-3-.4-4.3-1.2l-.3-.2-3.1.8.8-3-.2-.3c-.9-1.4-1.3-2.9-1.3-4.5C3.6 7.3 7.3 3.6 12 3.6s8.4 3.7 8.4 8.4-3.7 8.3-8.4 8.3z"/>
-          </svg>
-          WhatsApp
-        </a>
-        {% endif %}
-        <a href="{{ url_for('peer_edit', peer_id=peer.id) }}" class="btn secondary">Editar</a>
-        <form method="post" action="{{ url_for('peer_toggle', peer_id=peer.id) }}">
-          <button type="submit" class="secondary">{{ "Ativar" if peer.disabled else "Desativar" }}</button>
-        </form>
-        <form method="post" action="{{ url_for('peer_delete', peer_id=peer.id) }}"
-              onsubmit="return confirm('Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.')">
-          <button type="submit" class="danger">Apagar</button>
-        </form>
+        <div class="peer-actions-row">
+          {% if peer.private_key_enc %}
+          <a href="{{ url_for('peer_conf', peer_id=peer.id) }}" class="btn secondary">.conf</a>
+          <a href="{{ url_for('peer_qr', peer_id=peer.id) }}"
+             class="btn secondary qr-trigger"
+             data-peer-name="{{ peer.name }}"
+             data-qr-url="{{ url_for('peer_qr', peer_id=peer.id) }}"
+             data-conf-url="{{ url_for('peer_conf', peer_id=peer.id) }}">
+            QR Code
+          </a>
+          {% endif %}
+          <form method="post" action="{{ url_for('peer_regenerate', peer_id=peer.id) }}"
+                onsubmit="return confirm('{{ 'Gerar novo par de chaves' if not peer.private_key_enc else 'Rodar a private key' }} para {{ peer.name }}?\n\n A config atual do dispositivo DEIXA DE FUNCIONAR até reimportares o novo QR/.conf.\n Continuar?');">
+            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+            <button type="submit" class="secondary">{{ 'Gerar chaves' if not peer.private_key_enc else 'Rodar chave' }}</button>
+          </form>
+          <a href="{{ url_for('peer_edit', peer_id=peer.id) }}" class="btn secondary">Editar</a>
+        </div>
+        <div class="peer-actions-row">
+          <form method="post" action="{{ url_for('peer_toggle', peer_id=peer.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+            <button type="submit" class="secondary">{{ "Ativar" if peer.disabled else "Desativar" }}</button>
+          </form>
+          <form method="post" action="{{ url_for('peer_delete', peer_id=peer.id) }}"
+                onsubmit="return confirm('Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.');">
+            <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+            <button type="submit" class="danger">Apagar</button>
+          </form>
+        </div>
       </div>
     </div>
     {% endfor %}
@@ -283,52 +285,5 @@
 
 <script src="{{ url_for('static', filename='vendor/chartjs.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/bandwidth-modal.js') }}"></script>
-
-{# ─── WhatsApp Modal ─── #}
-<div class="modal" id="wa-modal" aria-hidden="true" role="dialog" aria-labelledby="wa-modal-title">
-  <div class="modal-backdrop" data-modal-close></div>
-  <div class="modal-card">
-    <button class="modal-close" data-modal-close aria-label="Fechar">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="18" y1="6" x2="6" y2="18"/>
-        <line x1="6" y1="6" x2="18" y2="18"/>
-      </svg>
-    </button>
-
-    <h2 id="wa-modal-title" class="modal-title">
-      Partilhar via WhatsApp — <span class="peer-name"></span>
-    </h2>
-
-    <label for="wa-ddi">DDI (código do país)</label>
-    <select id="wa-ddi">
-      <option value="351">🇵🇹 +351 (PT)</option>
-      <option value="55">🇧🇷 +55 (BR)</option>
-      <option value="34">🇪🇸 +34 (ES)</option>
-      <option value="33">🇫🇷 +33 (FR)</option>
-      <option value="1">🇺🇸 +1 (US)</option>
-      <option value="">Outro (escreve DDI+número abaixo)</option>
-    </select>
-
-    <label for="wa-phone">NÚMERO</label>
-    <input type="tel" id="wa-phone" placeholder="912 345 678" autocomplete="off">
-
-    <p class="hint">
-      Se DDI = "Outro", escreve DDI+número juntos (ex: <code>44 7700 900123</code>).
-      Caso contrário, só o número sem DDI. Apenas dígitos.
-    </p>
-
-    <details>
-      <summary>Pré-visualizar mensagem</summary>
-      <pre class="wa-preview" style="white-space: pre-wrap; font-size: 0.75rem; max-height: 200px; overflow: auto;"></pre>
-    </details>
-
-    <div class="modal-actions">
-      <button id="wa-send" class="btn" disabled>Abrir WhatsApp</button>
-      <button data-modal-close class="btn secondary">Cancelar</button>
-    </div>
-  </div>
-</div>
-
-<script src="{{ url_for('static', filename='js/whatsapp-modal.js') }}"></script>
 <script src="{{ url_for('static', filename='js/global-chart.js') }}"></script>
 {% endblock %}

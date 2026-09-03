@@ -724,6 +724,31 @@ def create_app() -> Flask:
             return redirect(url_for("peers_list"))
         return render_template("peer_edit.html", peer=peer)
 
+    @app.route("/peers/<peer_id>/regenerate", methods=["POST"])
+    @login_required
+    def peer_regenerate(peer_id):
+        s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
+        peer = state.find_peer_by_id(s, peer_id)
+        if peer is None:
+            abort(404)
+        priv, pub = wg.wg_genkey()
+        peer["private_key_enc"] = state.encrypt_private_key(priv, app.config["MASTER_KEY"])
+        peer["public_key"] = pub
+        state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
+        try:
+            wg.apply_state_to_wg(s, cfg, mode="syncconf")
+        except Exception:
+            app.logger.exception("Failed to apply after key regeneration")
+            flash("Chaves geradas no estado, mas apply ao wg falhou — ver logs", "error")
+            return redirect(url_for("peers_list"))
+        flash(
+            f"Novo par de chaves para {peer['name']} — "
+            "descarrega o .conf/QR e reimporta no dispositivo; "
+            "a config antiga deixa de funcionar.",
+            "warning",
+        )
+        return redirect(url_for("peers_list"))
+
     @app.route("/vpn/toggle", methods=["POST"])
     @login_required
     def vpn_toggle():

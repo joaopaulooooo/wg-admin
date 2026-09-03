@@ -4,6 +4,19 @@ All notable changes to wg-admin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+- **WhatsApp share button and modal** — dropped from the peers page along with its JS (`static/js/whatsapp-modal.js`). `.conf` download and QR remain.
+
+### Fixed
+- **Peer card action buttons standardized** — always two rows (row 1: `.conf`, `QR Code`, `Rodar chave`/`Gerar chaves`, `Editar`; row 2: `Ativar`/`Desativar`, `Apagar`) with uniform fixed height; the previous mixed `<a>`/`<button>` inline layout rendered mismatched heights (UA `line-height` differs between the two). Emojis dropped from button labels.
+- **Peer toggle form was missing its CSRF token** — the Ativar/Desativar form posted without `csrf_token` and would 403 against the CSRF check.
+
+### Added
+- **Key generation for imported peers** — peers imported from `wg0.conf` (🔒, no stored private key) now have a **🔑 Gerar chaves** button on their card: generates a fresh keypair, stores the private key encrypted, updates the peer's public key in state + `wg0.conf` (applied via zero-downtime `syncconf`), which unlocks `.conf` download and QR. The confirm dialog warns that the device's current config stops working until it re-imports the new QR.
+- **Per-peer private key rotation** — peers created in wg-admin now have a **🔑 Rodar chave** button on their card (same route): rotates that peer's keypair, applies via `syncconf`, and the new `.conf`/QR are immediately downloadable.
+
 ## [0.2.0] — 2026-09-03
 
 ### Added
