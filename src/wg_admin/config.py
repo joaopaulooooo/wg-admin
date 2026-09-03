@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import configparser
+import os
 from pathlib import Path
 from typing import List
 
@@ -44,3 +45,11 @@ def get_dns_list(cfg: configparser.ConfigParser) -> List[str]:
 def get_allowed_ips_list(cfg: configparser.ConfigParser) -> List[str]:
     raw = cfg["peer_defaults"].get("allowed_ips", "0.0.0.0/0")
     return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+def save_config(path: Path, cfg: configparser.ConfigParser) -> None:
+    """Atomic config.ini write (tmp + os.replace)."""
+    tmp = Path(path).with_suffix(".ini.tmp")
+    with open(tmp, "w") as f:
+        cfg.write(f)
+    os.replace(tmp, path)

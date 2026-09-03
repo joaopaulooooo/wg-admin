@@ -92,7 +92,7 @@ def generate_wg_conf(interface: dict, peers: list) -> str:
     optionally name (rendered as a comment header).
     """
     lines: list[str] = ["[Interface]"]
-    for key in ("Address", "ListenPort", "PrivateKey"):
+    for key in ("Address", "ListenPort", "MTU", "PrivateKey"):
         if key in interface and interface[key]:
             lines.append(f"{key} = {interface[key]}")
     for key in ("PostUp", "PostDown"):
@@ -109,6 +109,68 @@ def generate_wg_conf(interface: dict, peers: list) -> str:
         lines.append(f"{prefix}AllowedIPs = {peer['AllowedIPs']}")
 
     return "\n".join(lines) + "\n"
+
+
+INTERFACE_KEY_ORDER = ("Address", "ListenPort", "MTU", "PrivateKey")
+
+
+def update_interface_in_conf(conf_path: Path, updates: dict) -> dict:
+    """Surgically rewrite the [Interface] section of a wg conf file.
+
+    Everything after the first [Peer] section start (peers, name comments,
+    disabled sections, blank lines) is preserved byte-for-byte.
+
+    `updates` maps interface keys to new values. PostUp/PostDown are lists of
+    strings. A value of None, "" or [] removes the key. Atomic (tmp+replace).
+
+    Returns the new parsed interface dict.
+    """
+    content = Path(conf_path).read_text()
+    parsed = parse_wg_conf(content)
+    iface = dict(parsed["interface"])
+    for key, value in updates.items():
+        if value is None or value == "" or value == []:
+            iface.pop(key, None)
+        elif isinstance(value, str):
+            iface[key] = value.strip()
+        else:
+            iface[key] = value
+
+    out: list[str] = ["[Interface]"]
+    for key in INTERFACE_KEY_ORDER:
+        if iface.get(key):
+            out.append(f"{key} = {iface[key]}")
+    for key in ("PostUp", "PostDown"):
+        for value in iface.get(key, []) or []:
+            out.append(f"{key} = {value}")
+
+    # Find the first peer section start (plain or commented-out) and keep
+    # everything from that line onwards verbatim, including contiguous
+    # comment/blank lines above it (e.g. "# name: X" headers).
+    src_lines = content.splitlines()
+    tail_idx = None
+    for i, raw in enumerate(src_lines):
+        stripped = raw.strip()
+        if stripped.startswith("[Peer]") or (
+            stripped.startswith("#") and stripped.lstrip("#").strip().startswith("[Peer]")
+        ):
+            tail_idx = i
+            break
+    if tail_idx is not None:
+        while tail_idx > 0:
+            prev = src_lines[tail_idx - 1].strip()
+            if prev.startswith("#") or prev == "":
+                tail_idx -= 1
+            else:
+                break
+        new_content = "\n".join(out) + "\n\n" + "\n".join(src_lines[tail_idx:]) + "\n"
+    else:
+        new_content = "\n".join(out) + "\n"
+
+    tmp = Path(conf_path).with_suffix(".conf.tmp")
+    tmp.write_text(new_content)
+    os.replace(tmp, conf_path)
+    return parse_wg_conf(Path(conf_path).read_text())["interface"]
 
 
 @dataclass

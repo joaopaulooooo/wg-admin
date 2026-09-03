@@ -1,6 +1,7 @@
 """Flask app: routes, auth, CSRF, rate limit."""
 from __future__ import annotations
 
+import ipaddress
 import secrets as pysecrets
 import subprocess
 from datetime import datetime, timezone, timedelta
@@ -21,6 +22,7 @@ CONFIG_PATH = Path("/wg-admin/config.ini")
 RATELIMIT_PATH = Path("/wg-admin/secrets/auth_ratelimit.json")
 AUTHLOG_PATH = Path("/wg-admin/secrets/auth.log")
 BANDWIDTH_PATH = Path("/wg-admin/bandwidth.json")
+WG_CONF_DIR = Path("/etc/wireguard")
 
 
 def format_duration(seconds):
@@ -39,6 +41,30 @@ def format_duration(seconds):
     if seconds < 86400:
         return f"{seconds // 3600}h"
     return f"{seconds // 86400}d"
+
+
+def _schedule_shell(app: Flask, shell_cmd: str) -> None:
+    """Run a detached shell command after the current response completes.
+
+    start_new_session double-forks so the command survives (and doesn't kill)
+    the in-flight HTTP response. Skipped under TESTING.
+    """
+    if app.config.get("TESTING"):
+        return
+    try:
+        subprocess.Popen(
+            ["sh", "-c", shell_cmd],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        app.logger.exception("Could not schedule shell command: %s", shell_cmd)
+
+
+def _schedule_self_restart(app: Flask) -> None:
+    """Restart wg-admin in ~2s so all gunicorn workers reload config.ini."""
+    _schedule_shell(app, "sleep 2; systemctl restart wg-admin")
 
 
 def create_app() -> Flask:
@@ -362,15 +388,18 @@ def create_app() -> Flask:
         return redirect(url_for("peers_list"))
 
     def _get_server_public_key() -> str:
-        """Get server public key — try config.ini first, fall back to live `wg show`."""
-        key = cfg["wg"].get("server_public_key", "").strip()
-        if key:
-            return key
+        """Get server public key — live `wg show` first (source of truth, survives
+        key rotation), fall back to config.ini, else empty."""
         try:
-            return wg.wg_server_public_key(cfg["wg"]["interface"])
+            key = wg.wg_server_public_key(cfg["wg"]["interface"])
+            if key:
+                return key
         except Exception:
             app.logger.warning("Could not get server public key via wg show", exc_info=True)
-            return ""
+        key = cfg["wg"].get("server_public_key", "").strip()
+        if key:
+            app.logger.info("server_public_key: using static value from config.ini (wg show unavailable)")
+        return key
 
     @app.route("/peers/<peer_id>/conf")
     @login_required
@@ -499,6 +528,167 @@ def create_app() -> Flask:
     @login_required
     def api_server_status():
         return jsonify(serverstats.collect(cfg))
+
+    # ─── WireGuard settings ────────────────────────────────────────────
+
+    def _conf_path() -> Path:
+        return WG_CONF_DIR / f"{cfg['wg']['interface']}.conf"
+
+    def _read_iface() -> dict:
+        try:
+            p = _conf_path()
+            if not p.exists():
+                return {}
+            return wg.parse_wg_conf(p.read_text())["interface"]
+        except OSError:
+            return {}
+
+    def _current_server_pubkey() -> str:
+        try:
+            key = wg.wg_server_public_key(cfg["wg"]["interface"])
+            if key:
+                return key
+        except Exception:
+            pass
+        try:
+            return wg.wg_server_public_key_from_conf(str(_conf_path()))
+        except Exception:
+            return ""
+
+    @app.route("/settings")
+    @login_required
+    def settings_page():
+        return render_template(
+            "settings.html",
+            iface=_read_iface(),
+            current_pub=_current_server_pubkey(),
+            peer_defaults=cfg["peer_defaults"],
+            interface=cfg["wg"]["interface"],
+        )
+
+    @app.route("/settings/interface", methods=["POST"])
+    @login_required
+    def settings_interface():
+        address = request.form.get("address", "").strip()
+        listen_port = request.form.get("listen_port", "").strip()
+        mtu = request.form.get("mtu", "").strip()
+        post_up = [l.strip() for l in request.form.get("post_up", "").splitlines() if l.strip()]
+        post_down = [l.strip() for l in request.form.get("post_down", "").splitlines() if l.strip()]
+
+        try:
+            ipaddress.ip_network(address, strict=False)
+        except ValueError:
+            flash("Endereço inválido — usa o formato CIDR, ex: 10.0.0.1/24", "error")
+            return redirect(url_for("settings_page"))
+        if not listen_port.isdigit() or not (1 <= int(listen_port) <= 65535):
+            flash("ListenPort inválido (1-65535)", "error")
+            return redirect(url_for("settings_page"))
+        if mtu and (not mtu.isdigit() or not (1280 <= int(mtu) <= 9000)):
+            flash("MTU inválido (1280-9000, ou vazio)", "error")
+            return redirect(url_for("settings_page"))
+
+        updates = {
+            "Address": address,
+            "ListenPort": listen_port,
+            "MTU": mtu,
+            "PostUp": post_up,
+            "PostDown": post_down,
+        }
+        try:
+            wg.update_interface_in_conf(_conf_path(), updates)
+            s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
+            wg.apply_state_to_wg(s, cfg, mode="restart")
+        except FileNotFoundError:
+            flash(f"Conf não encontrado: {_conf_path()}", "error")
+            return redirect(url_for("settings_page"))
+        except Exception:
+            app.logger.exception("Failed to update interface settings")
+            flash("Falha ao aplicar — conf não alterado ou parcialmente aplicado, ver logs", "error")
+            return redirect(url_for("settings_page"))
+        flash("Interface atualizada e wg-quick reiniciado — peers reconectam em segundos", "success")
+        return redirect(url_for("settings_page"))
+
+    @app.route("/settings/peer-defaults", methods=["POST"])
+    @login_required
+    def settings_peer_defaults():
+        endpoint_host = request.form.get("endpoint_host", "").strip()
+        endpoint_port = request.form.get("endpoint_port", "").strip()
+        allowed_ips = request.form.get("allowed_ips", "").strip()
+        dns = request.form.get("dns", "").strip()
+
+        if not endpoint_host:
+            flash("Endpoint host é obrigatório (ex: vpn.exemplo.pt)", "error")
+            return redirect(url_for("settings_page"))
+        if not endpoint_port.isdigit() or not (1 <= int(endpoint_port) <= 65535):
+            flash("Porta do endpoint inválida (1-65535)", "error")
+            return redirect(url_for("settings_page"))
+        try:
+            for cidr in [c.strip() for c in allowed_ips.split(",") if c.strip()]:
+                ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            flash("AllowedIPs inválido — lista de CIDRs separados por vírgula", "error")
+            return redirect(url_for("settings_page"))
+        try:
+            for ip in [d.strip() for d in dns.split(",") if d.strip()]:
+                ipaddress.ip_address(ip)
+        except ValueError:
+            flash("DNS inválido — lista de IPs separados por vírgula (ou vazio)", "error")
+            return redirect(url_for("settings_page"))
+
+        cfg["peer_defaults"]["endpoint_host"] = endpoint_host
+        cfg["peer_defaults"]["endpoint_port"] = endpoint_port
+        cfg["peer_defaults"]["allowed_ips"] = allowed_ips
+        cfg["peer_defaults"]["dns"] = dns
+        try:
+            config.save_config(CONFIG_PATH, cfg)
+        except Exception:
+            app.logger.exception("Failed to save config.ini")
+            flash("Falha ao gravar config.ini — ver logs", "error")
+            return redirect(url_for("settings_page"))
+        flash("Defaults gravados — wg-admin reinicia em segundos para recarregar", "success")
+        _schedule_self_restart(app)
+        return redirect(url_for("settings_page"))
+
+    @app.route("/settings/rotate-key", methods=["POST"])
+    @login_required
+    def settings_rotate_key():
+        priv, pub = wg.wg_genkey()
+        try:
+            wg.update_interface_in_conf(_conf_path(), {"PrivateKey": priv})
+            s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
+            wg.apply_state_to_wg(s, cfg, mode="restart")
+        except FileNotFoundError:
+            flash(f"Conf não encontrado: {_conf_path()}", "error")
+            return redirect(url_for("settings_page"))
+        except Exception:
+            app.logger.exception("Failed to rotate server key")
+            flash("Falha ao rodar a chave — ver logs (conf pode ter ficado com a chave antiga)", "error")
+            return redirect(url_for("settings_page"))
+        flash(
+            f"Private key rodada. Nova public key: {pub} — "
+            "os .conf/QR dos peers já são gerados com a nova chave; "
+            "os clientes têm de reimportar a config.",
+            "warning",
+        )
+        return redirect(url_for("settings_page"))
+
+    @app.route("/settings/restart-wg-admin", methods=["POST"])
+    @login_required
+    def settings_restart_wg_admin():
+        flash("Reinício do wg-admin agendado (~2s) — aguarde e recarregue a página", "warning")
+        _schedule_self_restart(app)
+        return redirect(url_for("settings_page"))
+
+    @app.route("/settings/restart-wireguard", methods=["POST"])
+    @login_required
+    def settings_restart_wireguard():
+        interface = cfg["wg"]["interface"]
+        flash(
+            f"Reinício do wg-quick@{interface} agendado (~1s) — os peers desconectam e reconectam sozinhos",
+            "warning",
+        )
+        _schedule_shell(app, f"sleep 1; systemctl restart wg-quick@{interface}")
+        return redirect(url_for("settings_page"))
 
     @app.route("/peers/<peer_id>/edit", methods=["GET", "POST"])
     @login_required

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Configurações — wg-admin{% endblock %}
+{% block content %}
+<div class="container">
+  <h1><span class="accent-bar"></span>Configurações WireGuard</h1>
+  <p class="subtitle">// interface {{ interface }} · conf em /etc/wireguard/{{ interface }}.conf</p>
+
+  <div class="warn">
+    ⚠️ Alterações de interface e rotação de chave reiniciam o wg-quick — se estás
+    a aceder via VPN, a conexão cai por ~2s. Os peers reconectam sozinhos.
+  </div>
+
+  <div class="settings-grid">
+
+    {# ─── Interface ─── #}
+    <div class="settings-card">
+      <h2>Interface</h2>
+      <form method="post" action="{{ url_for('settings_interface') }}">
+        <label for="address">ADDRESS (CIDR)</label>
+        <input type="text" id="address" name="address" required
+               value="{{ iface.get('Address', '') }}" placeholder="10.0.0.1/24">
+
+        <label for="listen_port">LISTENPORT (UDP)</label>
+        <input type="number" id="listen_port" name="listen_port" min="1" max="65535" required
+               value="{{ iface.get('ListenPort', '51820') }}">
+
+        <label for="mtu">MTU (opcional)</label>
+        <input type="number" id="mtu" name="mtu" min="1280" max="9000"
+               value="{{ iface.get('MTU', '') }}" placeholder="vazio = auto">
+
+        <label for="post_up">POSTUP (um por linha)</label>
+        <textarea id="post_up" name="post_up" rows="2" placeholder="iptables ...">{{ "\n".join(iface.get('PostUp', [])) }}</textarea>
+
+        <label for="post_down">POSTDOWN (um por linha)</label>
+        <textarea id="post_down" name="post_down" rows="2" placeholder="iptables ...">{{ "\n".join(iface.get('PostDown', [])) }}</textarea>
+
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <div class="form-row">
+          <button type="submit" onclick="this.disabled=true; this.innerHTML='A aplicar…'; this.form.submit();">Guardar e aplicar</button>
+        </div>
+      </form>
+    </div>
+
+    {# ─── Defaults de clientes ─── #}
+    <div class="settings-card">
+      <h2>Defaults dos clientes</h2>
+      <p class="hint">Valores usados nos .conf/QR gerados para novos peers.</p>
+      <form method="post" action="{{ url_for('settings_peer_defaults') }}">
+        <label for="endpoint_host">ENDPOINT HOST</label>
+        <input type="text" id="endpoint_host" name="endpoint_host" required
+               value="{{ peer_defaults.get('endpoint_host', '') }}" placeholder="vpn.exemplo.pt">
+
+        <label for="endpoint_port">ENDPOINT PORT</label>
+        <input type="number" id="endpoint_port" name="endpoint_port" min="1" max="65535" required
+               value="{{ peer_defaults.get('endpoint_port', '51820') }}">
+
+        <label for="allowed_ips">ALLOWEDIPS (CIDRs, vírgula)</label>
+        <input type="text" id="allowed_ips" name="allowed_ips" required
+               value="{{ peer_defaults.get('allowed_ips', '0.0.0.0/0') }}" placeholder="0.0.0.0/0">
+
+        <label for="dns">DNS (IPs, vírgula, vazio = nenhum)</label>
+        <input type="text" id="dns" name="dns"
+               value="{{ peer_defaults.get('dns', '') }}" placeholder="1.1.1.1, 1.0.0.1">
+
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <div class="form-row">
+          <button type="submit" onclick="this.disabled=true; this.innerHTML='A gravar…'; this.form.submit();">Guardar defaults</button>
+        </div>
+      </form>
+    </div>
+
+    {# ─── Chaves ─── #}
+    <div class="settings-card">
+      <h2>Chaves do servidor</h2>
+      <label>PUBLIC KEY ATUAL</label>
+      <div class="key-display">
+        <code id="server-pubkey">{{ current_pub or '(indisponível)' }}</code>
+        <button type="button" class="btn secondary" onclick="navigator.clipboard.writeText(document.getElementById('server-pubkey').textContent).then(()=>{this.innerHTML='Copiado ✓'; setTimeout(()=>this.innerHTML='Copiar',1500)})">Copiar</button>
+      </div>
+      <p class="hint">A private key nunca é mostrada. Os .conf/QR usam sempre a
+         chave live da interface — rotações aplicam-se sozinho.</p>
+
+      <form method="post" action="{{ url_for('settings_rotate_key') }}"
+            onsubmit="return confirm('Rodar a private key do servidor?\n\n TODOS os clientes deixam de ligar até reimportarem um novo .conf/QR.\n Continuar?');">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <div class="form-row">
+          <button type="submit" class="danger" onclick="this.disabled=true; this.innerHTML='A rodar…'; this.form.submit();">Rodar private key</button>
+        </div>
+      </form>
+    </div>
+
+    {# ─── Serviços ─── #}
+    <div class="settings-card">
+      <h2>Serviços</h2>
+      <form method="post" action="{{ url_for('settings_restart_wg_admin') }}"
+            onsubmit="return confirm('Reiniciar o wg-admin?\n\n O painel fica indisponível ~2-3s.');">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <div class="form-row">
+          <button type="submit" onclick="this.disabled=true; this.innerHTML='A reiniciar…'; this.form.submit();">Reiniciar wg-admin</button>
+        </div>
+      </form>
+      <form method="post" action="{{ url_for('settings_restart_wireguard') }}"
+            onsubmit="return confirm('Reiniciar o WireGuard (wg-quick@{{ interface }})?\n\n TODOS os peers (incluindo a tua ligação, se estiveres via VPN) desconectam por ~1-2s.');">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <div class="form-row">
+          <button type="submit" class="danger" onclick="this.disabled=true; this.innerHTML='A reiniciar…'; this.form.submit();">Reiniciar WireGuard</button>
+        </div>
+      </form>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

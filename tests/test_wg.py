@@ -407,3 +407,84 @@ def test_wg_interface_active_file_not_found_returns_false(monkeypatch):
         raise FileNotFoundError()
     monkeypatch.setattr("wg_admin.wg.subprocess.run", boom)
     assert wg.wg_interface_active("wg0") is False
+
+
+def test_generate_wg_conf_renders_mtu():
+    from wg_admin.wg import generate_wg_conf
+    out = generate_wg_conf(
+        {"Address": "10.0.0.1/24", "ListenPort": "51820", "MTU": "1420", "PrivateKey": "K="},
+        [],
+    )
+    assert "MTU = 1420" in out
+
+
+def test_generate_wg_conf_omits_absent_mtu():
+    from wg_admin.wg import generate_wg_conf
+    out = generate_wg_conf({"Address": "10.0.0.1/24", "ListenPort": "51820"}, [])
+    assert "MTU" not in out
+
+
+def test_update_interface_in_conf_preserves_peers_verbatim(tmp_path):
+    from wg_admin.wg import update_interface_in_conf
+    original = """[Interface]
+Address = 10.0.0.1/24
+ListenPort = 51820
+PrivateKey = PRIV=
+
+# name: phone
+[Peer]
+PublicKey = PUB=
+AllowedIPs = 10.0.0.2/32
+"""
+    p = tmp_path / "wg0.conf"
+    p.write_text(original)
+    update_interface_in_conf(p, {"ListenPort": "51821", "MTU": "1420"})
+    content = p.read_text()
+    assert "ListenPort = 51821" in content
+    assert "MTU = 1420" in content
+    assert "PrivateKey = PRIV=" in content
+    assert "# name: phone" in content
+    assert "PUB=" in content
+    # atomic: no leftover tmp
+    assert not (tmp_path / "wg0.conf.tmp").exists()
+
+
+def test_update_interface_in_conf_keeps_commented_peer_blocks(tmp_path):
+    from wg_admin.wg import update_interface_in_conf
+    original = """[Interface]
+Address = 10.0.0.1/24
+ListenPort = 51820
+
+# name: old
+# [Peer]
+# PublicKey = PUBOLD=
+# AllowedIPs = 10.0.0.9/32
+"""
+    p = tmp_path / "wg0.conf"
+    p.write_text(original)
+    update_interface_in_conf(p, {"ListenPort": "51822"})
+    content = p.read_text()
+    assert "# [Peer]" in content
+    assert "# PublicKey = PUBOLD=" in content
+
+
+def test_update_interface_in_conf_empty_value_removes_key(tmp_path):
+    from wg_admin.wg import update_interface_in_conf
+    p = tmp_path / "wg0.conf"
+    p.write_text("[Interface]\nAddress = 10.0.0.1/24\nMTU = 1420\nListenPort = 51820\n")
+    iface = update_interface_in_conf(p, {"MTU": ""})
+    content = p.read_text()
+    assert "MTU" not in content
+    assert "Address = 10.0.0.1/24" in content
+    assert iface["Address"] == "10.0.0.1/24"
+
+
+def test_update_interface_in_conf_postup_postdown_lists(tmp_path):
+    from wg_admin.wg import update_interface_in_conf
+    p = tmp_path / "wg0.conf"
+    p.write_text("[Interface]\nAddress = 10.0.0.1/24\nListenPort = 51820\n")
+    update_interface_in_conf(p, {"PostUp": ["echo up", "echo up2"], "PostDown": ["echo down"]})
+    content = p.read_text()
+    assert content.count("PostUp = ") == 2
+    assert "PostUp = echo up2" in content
+    assert content.count("PostDown = ") == 1

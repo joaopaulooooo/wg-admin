@@ -4,9 +4,15 @@ All notable changes to wg-admin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] — 2026-09-03
 
 ### Added
+- **WireGuard settings page** (`/settings`, sidebar → "Configurações") — full server-side WireGuard configuration without SSH:
+  - **Interface**: Address (CIDR), ListenPort, MTU and PostUp/PostDown hooks, applied via a surgical `[Interface]`-section rewrite that preserves peer blocks (including `# name:` headers and disabled peers) byte-for-byte, then regenerated from state and applied with `wg-quick` restart. Validated: CIDR, port range, MTU 1280-9000.
+  - **Peer defaults**: endpoint host/port, AllowedIPs, DNS used in generated `.conf`/QR — saved atomically to `config.ini` followed by a detached self-restart (`sleep 2; systemctl restart wg-admin`) so all gunicorn workers reload; skipped under `TESTING`.
+  - **Key rotation**: one-click server private key rotation (`wg genkey`) with explicit confirm warning; peers section preserved, `wg-quick` restarted, new public key flashed. Combined with the live `wg show` pubkey lookup, generated `.conf`/QR files pick up the new key automatically — no manual edits.
+  - **Service restarts**: "Serviços" card with one-click **Reiniciar wg-admin** and **Reiniciar WireGuard** (`wg-quick@<iface>`), both with confirm dialogs; restarts are scheduled detached (`sleep 1-2` + `systemctl`) so the HTTP response is delivered before the bounce, and peers reconnect on their own.
+  - Current server public key displayed with copy button (live interface first, conf-derived fallback); the private key is never rendered.
 - **Server Status page** (`/server-status`) — live system metrics for the host running wg-admin: CPU %, memory % + totals, per-mount disk usage, uptime, load average, hostname, kernel, arch, public IP, and a WireGuard card (peers online/total, rx/tx totals + rate). Auto-refreshes every 5 s via fetch, pauses when the tab is hidden. New sidebar link between Password and footer. Metrics collected via `psutil` (new dependency); disk partitions filtered to physical fstypes (excludes tmpfs/proc/sysfs). WG section degrades to `interface_up=false` when `wg0` is down. Network rate computed between consecutive samples kept module-level — first request after startup shows `—`, second shows the real value.
 - **Production WSGI server (gunicorn)** — replaced the single-threaded Werkzeug dev server with gunicorn (4 workers). Werkzeug's accept queue was filling under internet scanner load, silently dropping new SYNs even from legitimate admins. Gunicorn workers accept connections in parallel, eliminating the bottleneck.
 - **Auth attempt log** — successful and failed logins written as JSON lines (`ts`, `iso`, `success`, `ip`, `user_agent`) to `/wg-admin/secrets/auth.log`. Rotates at 100 KB, keeping up to 5 backups (`auth.log.1` … `auth.log.5`).
@@ -18,7 +24,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **syncconf hot-reload** — new peers no longer drop active tunnels (zero-downtime create).
 - **GitHub repo link** in the sidebar footer (opens in new tab with `rel="noopener"`).
 
+### Fixed
+- **Responsive layout rebuilt for mobile** — the VPN kill-switch block (`.sidebar-vpn`) was added after the original responsive section and had no mobile rules: its stacked column + full-width button broke the horizontal top bar, and without `flex-wrap` the whole bar overflowed horizontally on phones. Now: top bar wraps gracefully; VPN status/quota/toggle render as inline pills; GitHub link is icon-only; grids (`peer-grid`, `stats`, `metric-grid`, `info-grid`) use `minmax(min(Npx, 100%), 1fr)` so they can never overflow narrow viewports; QR image is fluid (`max-width: 280px`, no fixed 280×280); modals get page padding, `max-height` + vertical scroll (usable in landscape); ≤480px tightens `h1`, subtitle, peer meta and modal padding.
+
 ### Changed
+- **`_get_server_public_key()` now prefers live `wg show` over config.ini** — the server public key embedded in generated `.conf`/QR files is read from the running interface (source of truth) first, falling back to the static `server_public_key` in `config.ini` only when `wg show` is unavailable. Previously a static (possibly stale) config.ini value won, so rotating the server keypair silently produced broken client configs until config.ini was manually edited.
 - **Rate-limit block window increased from 5 min to 30 min** — 5 failed attempts within 60 s now blocks the source IP for 30 minutes instead of 5. Persists across socket-activated restarts as before.
 - **Last-handshake time on the peers card now formats as `s`/`min`/`h`/`d`** instead of always showing seconds (e.g. "há 5min" instead of "há 300s"). Falls through `60s → 1min`, `3600s → 1h`, `86400s → 1d`.
 - **Removed the warning banner** from the peers list page (`/peers`). The "wg-quick
