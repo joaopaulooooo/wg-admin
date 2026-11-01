@@ -324,3 +324,73 @@ def test_update_state_nochanges_writes_nothing(tmp_path):
     _, result = state.update_state(p, key, mut)
     assert result is None
     assert p.stat().st_mtime_ns == before
+
+
+# ─── v0.3.3 coverage push: helpers, lock contention, write failure paths ────
+
+def test_add_peer_appends_in_place():
+    from wg_admin import state
+    s = state.empty_state()
+    peer = {"id": "x", "name": "n"}
+    state.add_peer(s, peer)
+    assert s["peers"] == [peer]
+
+
+def test_set_peer_disabled_unknown_peer_returns_false():
+    from wg_admin import state
+    s = state.empty_state()
+    assert state.set_peer_disabled(s, "ghost", True) is False
+
+
+def test_flock_times_out_when_lock_is_held(tmp_path, monkeypatch):
+    """A second writer waiting beyond the timeout raises TimeoutError."""
+    import fcntl as _fcntl
+    import os as _os
+    from wg_admin import state
+
+    p = tmp_path / "state.json.enc"
+    state.save_state(p, state.empty_state(), _os.urandom(32))
+
+    real_flock = state._flock
+    monkeypatch.setattr(state, "_flock",
+                        lambda path, timeout=0.2: real_flock(path, timeout=0.2))
+
+    # Hold the lock through a *different* open file description.
+    holder_fd = _os.open(str(p) + ".lock", _os.O_CREAT | _os.O_RDWR, 0o600)
+    try:
+        _fcntl.flock(holder_fd, _fcntl.LOCK_EX)
+        import pytest
+        with pytest.raises(TimeoutError):
+            state.save_state(p, state.empty_state(), _os.urandom(32))
+    finally:
+        _fcntl.flock(holder_fd, _fcntl.LOCK_UN)
+        _os.close(holder_fd)
+
+
+def test_atomic_write_cleanup_when_fsync_fails(tmp_path, monkeypatch):
+    """A failing fsync removes the temp file and re-raises."""
+    import os as _os
+    from wg_admin import state
+
+    p = tmp_path / "f.bin"
+    before = list(tmp_path.iterdir())
+    monkeypatch.setattr(state.os, "fsync",
+                        lambda fd: (_ for _ in ()).throw(OSError("disk gone")))
+    import pytest
+    with pytest.raises(OSError):
+        state._atomic_write_bytes(p, b"data")
+    assert list(tmp_path.iterdir()) == before  # no temp leftovers
+
+
+def test_atomic_write_cleanup_when_open_fails(tmp_path, monkeypatch):
+    """A failing open also cleans up silently (unlink of nothing)."""
+    import os as _os
+    from wg_admin import state
+
+    p = tmp_path / "f.bin"
+    monkeypatch.setattr(state.os, "open",
+                        lambda *a, **kw: (_ for _ in ()).throw(OSError("no fds")))
+    import pytest
+    with pytest.raises(OSError):
+        state._atomic_write_bytes(p, b"data")
+    assert not p.exists()

@@ -1094,7 +1094,7 @@ def create_app() -> Flask:
 # Module-level app is created lazily on first attribute access so tests can
 # monkeypatch SECRETS_DIR/STATE_PATH/CONFIG_PATH/RATELIMIT_PATH before any
 # real filesystem access happens.
-class _LazyApp:
+class _LazyApp:  # pragma: no cover — exercised only by the real entrypoint
     _cached = None
 
     def _get(self):
@@ -1109,5 +1109,5 @@ class _LazyApp:
 app = _LazyApp()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — dev server entrypoint
     app.run(host="127.0.0.1", port=5000)

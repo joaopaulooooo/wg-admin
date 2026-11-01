@@ -300,3 +300,53 @@ def test_collect_uptime(monkeypatch):
     data = serverstats.collect(cfg)
 
     assert data["uptime_seconds"] == 900
+
+
+# ─── v0.3.3 coverage push: guards ────────────────────────────────────────────
+
+def test_format_rate_rejects_negative_delta_and_zero_elapsed():
+    from wg_admin.serverstats import _format_rate
+    assert _format_rate(-1, 1.0) is None
+    assert _format_rate(10, 0.0) is None
+    assert _format_rate(10, 2.0) == 5
+
+
+def test_collect_skips_unreadable_mount(tmp_path, monkeypatch):
+    from wg_admin import serverstats
+    monkeypatch.setattr(serverstats.psutil, "disk_partitions", lambda all=False: [
+        type("P", (), {"device": "/dev/sda1", "mountpoint": "/", "fstype": "ext4"}),
+        type("P", (), {"device": "/dev/sdb1", "mountpoint": "/gone", "fstype": "ext4"}),
+    ])
+    real_usage = serverstats.psutil.disk_usage
+    def flaky(path):
+        if path == "/gone":
+            raise PermissionError("denied")
+        return real_usage(path)
+    monkeypatch.setattr(serverstats.psutil, "disk_usage", flaky)
+    monkeypatch.setattr(serverstats.psutil, "cpu_percent", lambda interval=None: 10.0)
+    cfg = type("C", (), {"__getitem__": staticmethod(
+        lambda k: {"wg": {"interface": "wg0"}}[k]), "has_section": lambda s, x: False})()
+    data = serverstats.collect(cfg)
+    assert [d["mount"] for d in data["disks"]] == ["/"]
+
+
+def test_collect_degrades_without_getloadavg(monkeypatch):
+    from wg_admin import serverstats
+    monkeypatch.setattr(serverstats.os, "getloadavg",
+                        lambda: (_ for _ in ()).throw(OSError("no proc")))
+    monkeypatch.setattr(serverstats.psutil, "cpu_percent", lambda interval=None: 10.0)
+    cfg = type("C", (), {"__getitem__": staticmethod(
+        lambda k: {"wg": {"interface": "wg0"}}[k]), "has_section": lambda s, x: False})()
+    data = serverstats.collect(cfg)
+    assert data["load_avg"] == []
+
+
+def test_collect_skips_empty_mountpoint(monkeypatch):
+    from wg_admin import serverstats
+    monkeypatch.setattr(serverstats.psutil, "disk_partitions", lambda all=False: [
+        type("P", (), {"device": "/dev/sda1", "mountpoint": "", "fstype": "ext4"}),
+    ])
+    monkeypatch.setattr(serverstats.psutil, "cpu_percent", lambda interval=None: 10.0)
+    cfg = type("C", (), {"__getitem__": staticmethod(
+        lambda k: {"wg": {"interface": "wg0"}}[k]), "has_section": lambda s, x: False})()
+    assert serverstats.collect(cfg)["disks"] == []

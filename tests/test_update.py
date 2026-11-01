@@ -149,3 +149,119 @@ def test_sidebar_renders_version_hook(client):
     assert b'id="wg-version"' in r.data
     assert b'data-csrf' in r.data
     assert __version__.encode() in r.data
+
+
+# ─── v0.3.3 coverage push: real fetch parsing + scheduling internals ────────
+
+import json as _json
+from types import SimpleNamespace
+
+
+class _FakeResp:
+    def __init__(self, data):
+        self._data = data
+    def read(self):
+        return self._data
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
+
+def test_fetch_latest_tag_picks_max_semver(monkeypatch):
+    from wg_admin import app as app_mod
+    payload = _json.dumps([
+        {"name": "v0.3.0"}, {"name": "v10.0.0"}, {"name": "v0.3.2"},
+        {"name": "not-a-tag"}, {"name": "v0.3.2-rc1"},
+    ]).encode()
+    monkeypatch.setattr(app_mod.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResp(payload))
+    assert app_mod._fetch_latest_tag() == "v10.0.0"
+
+
+def test_fetch_latest_tag_no_semver_tags(monkeypatch):
+    from wg_admin import app as app_mod
+    payload = _json.dumps([{"name": "main"}, {"name": "latest"}]).encode()
+    monkeypatch.setattr(app_mod.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResp(payload))
+    assert app_mod._fetch_latest_tag() is None
+
+
+def test_fetch_latest_tag_non_list_payload(monkeypatch):
+    from wg_admin import app as app_mod
+    monkeypatch.setattr(app_mod.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResp(b'{"error": "x"}'))
+    assert app_mod._fetch_latest_tag() is None
+
+
+def test_schedule_update_uses_systemd_run(client, monkeypatch):
+    from wg_admin import app as app_mod
+    calls = []
+    monkeypatch.setattr(
+        "wg_admin.app.subprocess.run",
+        lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0, stderr=""))
+    app = client.application
+    app.config["TESTING"] = False
+    try:
+        assert app_mod._schedule_update(app, "v9.9.9") is True
+    finally:
+        app.config["TESTING"] = True
+    assert calls and calls[0][0] == "systemd-run"
+    assert "v9.9.9" in calls[0][-1]  # the tag is in the script payload
+
+
+def test_schedule_update_systemd_run_failure_falls_back(client, monkeypatch):
+    from wg_admin import app as app_mod
+    monkeypatch.setattr(
+        "wg_admin.app.subprocess.run",
+        lambda cmd, **kw: SimpleNamespace(returncode=1, stderr="unit exists"))
+    pops = []
+    monkeypatch.setattr("wg_admin.app.subprocess.Popen", lambda cmd, **kw: pops.append(cmd))
+    app = client.application
+    app.config["TESTING"] = False
+    try:
+        assert app_mod._schedule_update(app, "v9.9.9") is True
+    finally:
+        app.config["TESTING"] = True
+    assert pops and pops[0][0] == "sh"
+
+
+def test_schedule_update_systemd_run_exception_falls_back(client, monkeypatch):
+    from wg_admin import app as app_mod
+    monkeypatch.setattr(
+        "wg_admin.app.subprocess.run",
+        lambda cmd, **kw: (_ for _ in ()).throw(FileNotFoundError("no systemd-run")))
+    pops = []
+    monkeypatch.setattr("wg_admin.app.subprocess.Popen", lambda cmd, **kw: pops.append(cmd))
+    app = client.application
+    app.config["TESTING"] = False
+    try:
+        assert app_mod._schedule_update(app, "v9.9.9") is True
+    finally:
+        app.config["TESTING"] = True
+    assert pops
+
+
+def test_schedule_shell_runs_detached_command(client, monkeypatch):
+    from wg_admin import app as app_mod
+    pops = []
+    monkeypatch.setattr("wg_admin.app.subprocess.Popen", lambda cmd, **kw: pops.append(cmd))
+    app = client.application
+    app.config["TESTING"] = False
+    try:
+        app_mod._schedule_shell(app, "true")
+    finally:
+        app.config["TESTING"] = True
+    assert pops[0] == ["sh", "-c", "true"]
+
+
+def test_schedule_shell_swallows_spawn_errors(client, monkeypatch):
+    from wg_admin import app as app_mod
+    monkeypatch.setattr("wg_admin.app.subprocess.Popen",
+                        lambda cmd, **kw: (_ for _ in ()).throw(OSError("no fds")))
+    app = client.application
+    app.config["TESTING"] = False
+    try:
+        app_mod._schedule_shell(app, "true")  # must not raise
+    finally:
+        app.config["TESTING"] = True

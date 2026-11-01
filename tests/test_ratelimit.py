@@ -71,3 +71,29 @@ def test_block_duration_is_30_minutes(tmp_path):
     assert blocked_until >= before + ratelimit.BLOCK_SEC - 1
     assert blocked_until <= after + ratelimit.BLOCK_SEC + 1
     assert ratelimit.BLOCK_SEC == 1800
+
+
+# ─── v0.3.3 coverage push: corrupt file & window reset ──────────────────────
+
+def test_load_returns_empty_on_corrupt_json(tmp_path):
+    from wg_admin import ratelimit
+    p = tmp_path / "rl.json"
+    p.write_text("{not json")
+    ratelimit.record_fail(p, "1.2.3.4")
+    assert ratelimit.is_blocked(p, "1.2.3.4") is False
+    # the corrupt file was replaced by a valid write
+    import json
+    assert "1.2.3.4" in json.loads(p.read_text())
+
+
+def test_record_fail_resets_window_older_than_60s(tmp_path):
+    import json
+    import time as _time
+    from wg_admin import ratelimit
+    p = tmp_path / "rl.json"
+    p.write_text(json.dumps({
+        "1.2.3.4": {"fails": 4, "first_fail_at": _time.time() - 120,
+                    "last_activity": _time.time() - 120}}))
+    ratelimit.record_fail(p, "1.2.3.4")
+    data = json.loads(p.read_text())
+    assert data["1.2.3.4"]["fails"] == 1  # window expired -> counter restarted

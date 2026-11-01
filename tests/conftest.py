@@ -52,3 +52,41 @@ def client(workdir):
     app.config["SESSION_COOKIE_SECURE"] = False
     with app.test_client() as c:
         yield c
+
+
+@pytest.fixture
+def make_app(tmp_path, monkeypatch):
+    """Factory: isolated app on a private tmp dir (no workdir side effects).
+
+    make_app(language="pt") pre-writes config.ini; without it the config is
+    absent (English defaults).
+    """
+    def _make(language=None, extra_config=""):
+        import os as _os
+        from wg_admin import app as app_mod, crypto
+        sec = tmp_path / "secrets"
+        sec.mkdir(exist_ok=True)
+        (sec / "master.key").write_bytes(_os.urandom(32))
+        (sec / "session.key").write_bytes(_os.urandom(32))
+        (sec / "auth.ini").write_text(
+            "password_hash = " + crypto.hash_password("pw") + "\n")
+        cfg_path = tmp_path / "config.ini"
+        parts = []
+        if language:
+            parts.append(f"[server]\nlanguage = {language}\n")
+        if extra_config:
+            parts.append(extra_config)
+        if parts:
+            cfg_path.write_text("\n".join(parts))
+        monkeypatch.setattr(app_mod, "SECRETS_DIR", sec)
+        monkeypatch.setattr(app_mod, "STATE_PATH", tmp_path / "state.enc")
+        monkeypatch.setattr(app_mod, "CONFIG_PATH", cfg_path)
+        monkeypatch.setattr(app_mod, "RATELIMIT_PATH", sec / "rl.json")
+        monkeypatch.setattr(app_mod, "AUTHLOG_PATH", sec / "auth.log")
+        monkeypatch.setattr(app_mod, "BANDWIDTH_PATH", tmp_path / "bw.json")
+        monkeypatch.setattr(app_mod, "WG_CONF_DIR", tmp_path)
+        app = app_mod.create_app()
+        app.config.update(TESTING=True, SESSION_COOKIE_SECURE=False)
+        return app
+
+    return _make

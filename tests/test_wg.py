@@ -485,3 +485,212 @@ def test_update_interface_in_conf_postup_postdown_lists(tmp_path):
     assert content.count("PostUp = ") == 2
     assert "PostUp = echo up2" in content
     assert content.count("PostDown = ") == 1
+
+
+# ─── v0.3.3 coverage push: legacy `wg show dump` formats + subprocess wrappers ──
+
+from types import SimpleNamespace
+
+PUB = "Y73ATDEJlSfrmn4NvB84WPA6B7HkpHXIHW/TJIJ5kmw="
+PUB2 = "RFSVIEkXbjlHGp+W0+FbPe3VAH5g7n5NoHOs1pk7P2Y="
+
+
+def test_parse_dump_empty_output_returns_empty():
+    from wg_admin.wg import parse_wg_show_dump
+    assert parse_wg_show_dump("", "wg0") == []
+
+
+def test_parse_dump_skips_short_lines():
+    from wg_admin.wg import parse_wg_show_dump
+    out = "\n".join(["wg0\tshort\tline", PUB + "\t(none)"])
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_parse_dump_skips_interface_line():
+    from wg_admin.wg import parse_wg_show_dump
+    out = "wg0\tPRIV=\tPUB=\t51820\tfwmark"
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_parse_dump_modern_without_psk():
+    from wg_admin.wg import parse_wg_show_dump
+    out = f"{PUB}\t1.2.3.4:51820\t10.0.0.2/32\t1718642000\t102400\t204800\t0"
+    peers = parse_wg_show_dump(out, "wg0")
+    assert len(peers) == 1
+    assert peers[0].public_key == PUB
+    assert peers[0].endpoint == "1.2.3.4:51820"
+    assert peers[0].latest_handshake == 1718642000
+    assert (peers[0].transfer_rx, peers[0].transfer_tx) == (102400, 204800)
+
+
+def test_parse_dump_legacy_with_ifname_and_psk():
+    from wg_admin.wg import parse_wg_show_dump
+    out = (f"wg0\t{PUB}\tPSK=\t1.2.3.4:51820\t10.0.0.2/32\t"
+           "1718642000\t102400\t204800\t0")
+    peers = parse_wg_show_dump(out, "wg0")
+    assert len(peers) == 1
+    assert peers[0].public_key == PUB
+    assert peers[0].latest_handshake == 1718642000
+
+
+def test_parse_dump_legacy_with_ifname_without_psk():
+    from wg_admin.wg import parse_wg_show_dump
+    out = f"wg0\t{PUB}\t1.2.3.4:51820\t10.0.0.2/32\t1718642000\t102400\t204800\t0"
+    peers = parse_wg_show_dump(out, "wg0")
+    assert len(peers) == 1
+    assert peers[0].endpoint == "1.2.3.4:51820"
+
+
+def test_parse_dump_skips_non_numeric_handshake():
+    from wg_admin.wg import parse_wg_show_dump
+    out = f"{PUB}\t(none)\t1.2.3.4:51820\t10.0.0.2/32\twhenever\t1\t2"
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_parse_dump_skips_invalid_pubkey():
+    from wg_admin.wg import parse_wg_show_dump
+    out = "short\t(none)\t1.2.3.4:51820\t10.0.0.2/32\t1718642000\t1\t2"
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_wg_pubkey_wraps_subprocess(monkeypatch):
+    from wg_admin import wg
+    calls = []
+    monkeypatch.setattr(
+        wg.subprocess, "run",
+        lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(stdout=PUB + "\n", returncode=0))
+    assert wg.wg_pubkey("PRIV=") == PUB
+    assert calls[0] == ["wg", "pubkey"]
+
+
+def test_wg_show_dump_wraps_subprocess(monkeypatch):
+    from wg_admin import wg
+    dump = (f"wg0\tPRIV=\tPUB=\t51820\tfwmark\n"
+            f"{PUB}\t(none)\t1.2.3.4:51820\t10.0.0.2/32\t1718642000\t100\t200\t0\n")
+    monkeypatch.setattr(wg.subprocess, "run",
+                        lambda cmd, **kw: SimpleNamespace(stdout=dump, returncode=0))
+    peers = wg.wg_show_dump("wg0")
+    assert len(peers) == 1 and peers[0].public_key == PUB
+
+
+def test_unit_is_active(monkeypatch):
+    from wg_admin import wg
+    monkeypatch.setattr(wg.subprocess, "run",
+                        lambda cmd: SimpleNamespace(returncode=0))
+    assert wg.unit_is_active("wg-admin.service") is True
+    monkeypatch.setattr(wg.subprocess, "run",
+                        lambda cmd: SimpleNamespace(returncode=3))
+    assert wg.unit_is_active("wg-admin.service") is False
+    monkeypatch.setattr(wg.subprocess, "run",
+                        lambda cmd: (_ for _ in ()).throw(FileNotFoundError("x")))
+    assert wg.unit_is_active("wg-admin.service") is False
+
+
+def test_server_pubkey_from_conf_without_private_key(tmp_path):
+    from wg_admin.wg import wg_server_public_key_from_conf
+    conf = tmp_path / "wg0.conf"
+    conf.write_text("[Interface]\nAddress = 10.0.0.1/24\n")
+    assert wg_server_public_key_from_conf(str(conf)) == ""
+
+
+def test_server_pubkey_from_conf_derives_key(tmp_path, monkeypatch):
+    from wg_admin import wg
+    conf = tmp_path / "wg0.conf"
+    conf.write_text("[Interface]\nPrivateKey = PRIV=\n")
+    monkeypatch.setattr(wg.subprocess, "run",
+                        lambda cmd, **kw: SimpleNamespace(stdout=PUB + "\n", returncode=0))
+    assert wg.wg_server_public_key_from_conf(str(conf)) == PUB
+
+
+def test_update_interface_preserves_mode_on_stat_error(tmp_path, monkeypatch):
+    from wg_admin import wg
+    conf = tmp_path / "wg0.conf"
+    conf.write_text("[Interface]\nPrivateKey = X\n")
+    real_stat = wg.os.stat
+    monkeypatch.setattr(wg.os, "stat",
+                        lambda p, **kw: (_ for _ in ()).throw(OSError("gone")))
+    try:
+        wg.update_interface_in_conf(conf, {"MTU": "1400"})
+    finally:
+        monkeypatch.setattr(wg.os, "stat", real_stat)
+    assert (conf.stat().st_mode & 0o777) == 0o600
+    assert "MTU = 1400" in conf.read_text()
+
+
+def test_apply_state_to_wg_reads_existing_conf(tmp_path, monkeypatch):
+    """Existing wg0.conf interface section is reused (not defaulted)."""
+    from pathlib import Path
+    from wg_admin import wg
+
+    conf = tmp_path / "wg0.conf"
+    conf.write_text("[Interface]\nAddress = 10.9.9.1/24\nListenPort = 51820\n"
+                    "PrivateKey = OLD=\n")
+
+    def fake_path(p):
+        return conf if str(p).endswith("wg0.conf") else Path(p)
+    monkeypatch.setattr(wg, "Path", fake_path)
+    written = {}
+    monkeypatch.setattr(wg, "_write_conf_atomic",
+                        lambda path, text, preserve_mode=False: written.update(path=path, text=text))
+    monkeypatch.setattr(wg, "wg_syncconf", lambda iface: True)
+
+    cfg = type("C", (), {"__getitem__": staticmethod(
+        lambda k: {"wg": {"interface": "wg0", "server_ip": "10.0.0.1",
+                          "subnet": "10.0.0.0/24"}}[k])})()
+    wg.apply_state_to_wg({"peers": []}, cfg, mode="syncconf")
+    assert "Address = 10.9.9.1/24" in written["text"]
+    assert "ListenPort = 51820" in written["text"]
+
+
+def test_parse_dump_legacy_ifname_too_few_fields():
+    from wg_admin.wg import parse_wg_show_dump
+    # 7 fields starting with the interface name: legacy branch, <8 -> skip
+    out = "wg0\tA\tB\tC\tD\tE\tF"
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_parse_dump_modern_short_line_skipped():
+    from wg_admin.wg import parse_wg_show_dump
+    # 5 fields, not interface-prefixed: modern branch, <7 -> skip
+    out = "PUBKEY44=\tx\ty\t1718642000\t5"
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_parse_dump_skips_non_numeric_transfer():
+    from wg_admin.wg import parse_wg_show_dump
+    out = f"{PUB}\t(none)\t1.2.3.4:51820\t10.0.0.2/32\t1718642000\tabc\t1\t0"
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_parse_dump_invalid_pubkey_with_valid_fields():
+    from wg_admin.wg import parse_wg_show_dump
+    out = f"short\t(none)\t1.2.3.4:51820\t10.0.0.2/32\t1718642000\t1\t2\t0"
+    assert parse_wg_show_dump(out, "wg0") == []
+
+
+def test_parse_conf_commented_kv_inside_disabled_peer():
+    from wg_admin.wg import parse_wg_conf
+    content = ("[Interface]\nPrivateKey = X\n\n"
+               "#[Peer]\n# just a comment header\n#PublicKey = Y=\n"
+               "#AllowedIPs = 10.0.0.2/32\n")
+    parsed = parse_wg_conf(content)
+    assert len(parsed["peers"]) == 1
+    assert parsed["peers"][0]["PublicKey"] == "Y="
+    assert parsed["peers"][0]["disabled"] is True
+
+
+def test_wg_server_public_key_live_wrapper(monkeypatch):
+    from wg_admin import wg
+    monkeypatch.setattr(wg.subprocess, "run",
+                        lambda cmd, **kw: SimpleNamespace(stdout=PUB + "\n", returncode=0))
+    assert wg.wg_server_public_key("wg0") == PUB
+
+
+def test_parse_conf_strips_inline_comments_on_active_lines():
+    from wg_admin.wg import parse_wg_conf
+    content = ("[Interface]\n"
+               "ListenPort = 51820 # inline note\n"
+               "PrivateKey = X= # another\n")
+    parsed = parse_wg_conf(content)
+    assert parsed["interface"]["ListenPort"] == "51820"
+    assert parsed["interface"]["PrivateKey"] == "X="

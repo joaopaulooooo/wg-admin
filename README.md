@@ -3,8 +3,8 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-259-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-359-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
 ## Features
@@ -150,7 +150,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-259 tests, 88% coverage.
+359 tests, 100% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -181,7 +181,7 @@ static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 259 tests, integration smoke test
+tests/            # 359 tests, 100% coverage, integration smoke test
 docs/             # specs, plans, smoke test checklist
 .github/          # CI workflow (actions pinned by SHA), issue/PR templates
 ```

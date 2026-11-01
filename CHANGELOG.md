@@ -4,6 +4,11 @@ All notable changes to wg-admin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Tests
+- **Coverage pushed from 88% to 100%** (359 tests, was 259). Highlights: the previously-untested `peer_edit` success flow; legacy `wg show dump` parser formats (ifname-prefixed with/without PSK, short/malformed lines); every settings failure branch (missing conf, bad endpoint/port, config write failures, rotate-key failures); quota banner/sparkline/suspension rendering with live statuses; auth robustness (`auth.ini` missing/garbage epoch fails closed); the real GitHub-tag fetch parser; `_schedule_update`/`_schedule_shell` internals (systemd-run success + fallbacks); flock timeout; atomic-write failure cleanups; 429/500 error pages; server-pubkey live-vs-config precedence. Unreachable-by-design lines (`if __name__` guards, dev-server entrypoint, `_LazyApp`) are marked `# pragma: no cover` instead of carrying fake tests, and the previously machine-dependent `_read_iface` branch now has deterministic tests for both conf-present and conf-absent machines.
+
 ## [0.3.2] — 2026-11-01
 
 ### Added

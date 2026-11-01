@@ -399,3 +399,76 @@ def test_quota_apply_failure_flags_pending_and_retries(tmp_path, monkeypatch):
     assert len(attempts) == 2
     st = state_mod.load_state(state_path, master_key)
     assert st["pending_apply"] is False
+
+
+# ─── v0.3.3 coverage push: edge cases ────────────────────────────────────────
+
+def test_format_bytes_petabytes():
+    from wg_admin.bandwidth import format_bytes
+    assert format_bytes(3 * 1024**5) == "3.0 PB"
+
+
+def test_track_sample_survives_wg_show_failure(tmp_path, monkeypatch):
+    from wg_admin import bandwidth
+    monkeypatch.setattr("wg_admin.wg.wg_show_dump",
+                        lambda iface: (_ for _ in ()).throw(RuntimeError("wg gone")))
+    bandwidth.track_sample(tmp_path / "bw.json")  # returns without writing
+    assert not (tmp_path / "bw.json").exists()
+
+
+def test_track_sample_skips_invalid_pubkeys(tmp_path, monkeypatch):
+    from wg_admin import bandwidth
+    from wg_admin.wg import PeerStatus
+    statuses = [PeerStatus(public_key="short", endpoint=None, allowed_ips=[],
+                           latest_handshake=0, transfer_rx=5, transfer_tx=5)]
+    monkeypatch.setattr("wg_admin.wg.wg_show_dump", lambda iface: statuses)
+    p = tmp_path / "bw.json"
+    bandwidth.track_sample(p)
+    import json
+    assert json.loads(p.read_text())["peers"] == {}
+
+
+def test_get_peer_stats_none_pubkey_returns_zeros():
+    from wg_admin.bandwidth import get_peer_stats
+    assert get_peer_stats({"peers": {}}, "(none)")["total_rx"] == 0
+
+
+def test_main_without_track_argument_returns_usage(monkeypatch, capsys):
+    import sys as _sys
+    from wg_admin import bandwidth
+    monkeypatch.setattr(_sys, "argv", ["bandwidth.py"])
+    assert bandwidth.main() == 1
+    assert "Usage" in capsys.readouterr().err
+
+
+def test_run_quota_check_without_master_key_is_noop(tmp_path, monkeypatch):
+    from wg_admin import bandwidth
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    monkeypatch.setattr(bandwidth, "SECRETS_DIR", secrets_dir, raising=False)
+    bandwidth._run_quota_check(tmp_path / "bw.json")  # no master.key -> silent return
+
+
+def test_run_quota_check_outer_failure_is_warned_not_raised(tmp_path, monkeypatch, capsys):
+    from wg_admin import bandwidth
+    import os as _os
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "master.key").write_bytes(_os.urandom(32))
+    monkeypatch.setattr(bandwidth, "SECRETS_DIR", secrets_dir, raising=False)
+    monkeypatch.setattr(bandwidth, "load_bandwidth",
+                        lambda p: (_ for _ in ()).throw(OSError("no bw")))
+    bandwidth._run_quota_check(tmp_path / "bw.json")
+    assert "WARN: quota check failed" in capsys.readouterr().err
+
+
+def test_atomic_write_cleanup_on_bandwidth_failure(tmp_path, monkeypatch):
+    from wg_admin import bandwidth
+    monkeypatch.setattr(bandwidth.os, "fsync",
+                        lambda fd: (_ for _ in ()).throw(OSError("disk gone")))
+    monkeypatch.setattr(bandwidth.os, "unlink",
+                        lambda p: (_ for _ in ()).throw(OSError("busy")))
+    import pytest
+    with pytest.raises(OSError):
+        bandwidth._atomic_write(tmp_path / "bw.json", {"peers": {}})  # cleanup also fails silently
+    monkeypatch.setattr(bandwidth.os, "unlink", bandwidth.os.unlink)

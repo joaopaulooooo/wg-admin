@@ -52,7 +52,7 @@ def parse_wg_conf(content: str) -> dict:
         # but only when not inside a disabled section (disabled lines start with #).
         if "#" in line:
             line = line.split("#", 1)[0].strip()
-            if not line:
+            if not line:  # pragma: no cover — lines starting with # never reach here
                 continue
 
         if line == "[Interface]":

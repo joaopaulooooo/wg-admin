@@ -885,3 +885,683 @@ def test_vpn_toggle_ignores_foreign_referrer(client, workdir, monkeypatch):
                      headers={"Referer": "http://localhost/server-status"})
     assert r2.status_code in (301, 302)
     assert "server-status" in r2.headers["Location"]
+
+
+# ─── v0.3.3 coverage push: main flows & error branches ─────────────────────
+
+import os as _os
+import time as _time
+from types import SimpleNamespace
+
+
+def seed_test_peer(workdir, client, peer_id="p1", **extra):
+    from wg_admin import state as state_mod
+    key = client.application.config["MASTER_KEY"]
+    s = state_mod.empty_state()
+    peer = {
+        "id": peer_id, "name": "orig", "notes": "", "public_key": "PUB",
+        "private_key_enc": state_mod.encrypt_private_key("OLD=", key),
+        "ip": "10.0.0.2", "disabled": False,
+        "created_at": "2026-06-17T00:00:00Z",
+    }
+    peer.update(extra)
+    s["peers"] = [peer]
+    state_mod.save_state(workdir["state_path"], s, key)
+    return s
+
+
+def test_change_password_get_renders_form(client):
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/change-password")
+    assert r.status_code == 200
+    assert "PASSWORD ATUAL".encode() in r.data
+
+
+def test_peer_new_get_renders_form(client):
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/peers/new")
+    assert r.status_code == 200
+    assert "Criar peer".encode() in r.data
+
+
+def test_peer_new_garbage_quota_defaults_to_zero(client, workdir, monkeypatch):
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("PRIV=", "PUB="))
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", lambda s, cfg, mode="syncconf": None)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/new", data={"name": "x", "quota_gb": "abc",
+                                        "csrf_token": token})
+    assert r.status_code in (301, 302)
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"],
+                              client.application.config["MASTER_KEY"])
+    assert st["peers"][0]["quota_gb"] == 0.0
+
+
+def test_peer_edit_success_updates_fields(client, workdir):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/edit", data={
+        "name": "renamed", "notes": "note", "quota_gb": "7.5",
+        "csrf_token": token}, follow_redirects=True)
+    assert r.status_code == 200
+    assert "Peer atualizado".encode() in r.data
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"],
+                              client.application.config["MASTER_KEY"])
+    p = st["peers"][0]
+    assert (p["name"], p["notes"], p["quota_gb"]) == ("renamed", "note", 7.5)
+
+
+def test_peer_edit_accepts_matching_private_key(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.wg_pubkey", lambda priv: "PUB")
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/edit", data={
+        "name": "orig", "private_key": "B" * 43 + "=",
+        "csrf_token": token}, follow_redirects=True)
+    assert r.status_code == 200
+    assert "Chave privada atualizada".encode() in r.data
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"],
+                              client.application.config["MASTER_KEY"])
+    assert state_mod.decrypt_private_key(
+        st["peers"][0]["private_key_enc"],
+        client.application.config["MASTER_KEY"]) == "B" * 43 + "="
+
+
+def test_peer_edit_deleted_mid_flight_404(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.state.update_state",
+                        lambda *a, **k: (_ for _ in ()).throw(KeyError("gone")))
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/edit", data={"name": "x", "csrf_token": token})
+    assert r.status_code == 404
+
+
+def test_peer_regenerate_apply_failure_flags_pending(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("NEW=", "NEWPUB="))
+
+    def boom(s, cfg, mode="syncconf"):
+        raise RuntimeError("apply failed")
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", boom)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/regenerate", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert r.status_code == 200
+    assert "apply ao wg falhou".encode() in r.data
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"],
+                              client.application.config["MASTER_KEY"])
+    assert st["pending_apply"] is True
+    assert st["peers"][0]["public_key"] == "NEWPUB="
+
+
+def test_peer_delete_apply_failure_flashes(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda s, cfg, mode="restart": (_ for _ in ()).throw(RuntimeError("x")))
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/delete", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert r.status_code == 200
+    assert "apply falhou".encode() in r.data
+
+
+def test_peer_toggle_deleted_mid_flight_404(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.state.update_state",
+                        lambda *a, **k: (_ for _ in ()).throw(KeyError("gone")))
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/toggle", data={"csrf_token": token})
+    assert r.status_code == 404
+
+
+def test_peer_toggle_apply_failure_flashes(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda s, cfg, mode="restart": (_ for _ in ()).throw(RuntimeError("x")))
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/toggle", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert "apply falhou".encode() in r.data
+
+
+def test_peer_toggle_success_clears_pending_flag(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client, pending_apply=True)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda s, cfg, mode="restart": None)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    client.post("/peers/p1/toggle", data={"csrf_token": token})
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"],
+                              client.application.config["MASTER_KEY"])
+    assert st["pending_apply"] is False
+    assert st["peers"][0]["disabled"] is True
+
+
+def test_apply_failure_with_flag_write_failure_does_not_crash(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda s, cfg, mode="restart": (_ for _ in ()).throw(RuntimeError("x")))
+    from wg_admin import state as state_mod
+    real_update = state_mod.update_state
+    calls = {"n": 0}
+
+    def flaky(path, key, mut):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_update(path, key, mut)
+        raise RuntimeError("flag write failed")
+    monkeypatch.setattr("wg_admin.state.update_state", flaky)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/toggle", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert r.status_code == 200  # flag write failure is logged, not fatal
+
+
+def test_conf_for_imported_peer_redirects(client, workdir):
+    seed_test_peer(workdir, client, private_key_enc="")
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/peers/p1/conf")
+    assert r.status_code in (301, 302)
+    r2 = client.get(r.headers["Location"])
+    assert "importado do wg0.conf".encode() in r2.data
+
+
+def test_qr_for_imported_peer_redirects(client, workdir):
+    seed_test_peer(workdir, client, private_key_enc="")
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/peers/p1/qr")
+    assert r.status_code in (301, 302)
+    r2 = client.get(r.headers["Location"])
+    assert "chave privada não disponível".encode() in r2.data
+
+
+def test_qr_unknown_peer_404(client):
+    client.post("/login", data={"password": "test-password"})
+    assert client.get("/peers/nope/qr").status_code == 404
+
+
+def test_peers_list_with_live_status_quota_and_banner(client, workdir, monkeypatch):
+    import json as _json
+    from datetime import datetime, timezone, timedelta
+    from wg_admin import state as state_mod
+    from wg_admin.wg import PeerStatus
+    key = client.application.config["MASTER_KEY"]
+    today = datetime.now(timezone.utc).date().isoformat()
+    yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    now = int(_time.time())
+    pub = "Y73ATDEJlSfrmn4NvB84WPA6B7HkpHXIHW/TJIJ5kmw="
+
+    def mk(pid, name, quota, suspended, gb):
+        peer = {"id": pid, "name": name, "notes": "", "public_key": pub + pid,
+                "private_key_enc": state_mod.encrypt_private_key("K=", key),
+                "ip": f"10.0.0.{pid}", "disabled": False,
+                "quota_gb": quota, "quota_suspended": suspended,
+                "quota_state_updated_at": None,
+                "created_at": "2026-06-17T00:00:00Z"}
+        peers_usage[pub + pid] = gb
+        return peer
+
+    peers_usage = {}
+
+    s = state_mod.empty_state()
+    s["pending_apply"] = True
+    s["peers"] = [
+        mk("a", "ok-peer", 10.0, False, 3),      # 30% -> ok
+        mk("b", "warn-peer", 10.0, False, 7.5),  # 75% -> warn
+        mk("c", "susp-peer", 10.0, True, 3),     # suspended -> danger
+    ]
+    state_mod.save_state(workdir["state_path"], s, key)
+
+    peers_bw = {}
+    for p in s["peers"]:
+        peers_bw[p["public_key"]] = {
+            "first_seen": "2026-06-01T00:00:00Z", "total_rx": 1, "total_tx": 1,
+            "daily": {today: {"rx": peers_usage[p["public_key"]] * (1024**3), "tx": 0},
+                      yesterday: {"rx": 0, "tx": 0}},
+            "last_sample": {"ts": "x", "rx": 0, "tx": 0}}
+    workdir["tmp_path"].joinpath("bandwidth.json").write_text(
+        _json.dumps({"peers": peers_bw}))
+
+    statuses = [PeerStatus(public_key=p["public_key"], endpoint=None,
+                           allowed_ips=[f"{p['ip']}/32"], latest_handshake=now,
+                           transfer_rx=1, transfer_tx=1) for p in s["peers"]]
+    monkeypatch.setattr("wg_admin.wg.wg_show_dump", lambda iface: statuses)
+    monkeypatch.setattr("wg_admin.app.BANDWIDTH_PATH",
+                        workdir["tmp_path"] / "bandwidth.json")
+
+    client.post("/login", data={"password": "test-password"})
+    html = client.get("/peers").get_data(as_text=True)
+    assert "Conectados agora" in html
+    assert "SUSPENSO" in html
+    assert "quota-warn" in html
+    assert "quota-danger" in html
+    assert "A última alteração ainda não foi aplicada" in html  # pending banner
+
+
+def test_peers_list_wg_show_failure_degrades(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    monkeypatch.setattr("wg_admin.wg.wg_show_dump",
+                        lambda iface: (_ for _ in ()).throw(RuntimeError("wg gone")))
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/peers")
+    assert r.status_code == 200
+    assert b"orig" in r.data
+
+
+# ─── v0.3.3 coverage push: settings failures, auth robustness, scheduling ───
+
+def _login_csrf(client, password="test-password"):
+    client.post("/login", data={"password": password})
+    with client.session_transaction() as sess:
+        return sess["csrf_token"]
+
+
+def test_settings_interface_conf_missing(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.wg.update_interface_in_conf",
+                        lambda p, u: (_ for _ in ()).throw(FileNotFoundError("gone")))
+    r = client.post("/settings/interface", data={
+        "address": "10.0.0.1/24", "listen_port": "51820", "mtu": "",
+        "csrf_token": token}, follow_redirects=True)
+    assert "Conf não encontrado".encode() in r.data
+
+
+def test_settings_interface_generic_failure(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.wg.update_interface_in_conf",
+                        lambda p, u: (_ for _ in ()).throw(RuntimeError("x")))
+    r = client.post("/settings/interface", data={
+        "address": "10.0.0.1/24", "listen_port": "51820", "mtu": "",
+        "csrf_token": token}, follow_redirects=True)
+    assert "Falha ao aplicar".encode() in r.data
+
+
+def test_settings_interface_apply_failure(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.wg.update_interface_in_conf", lambda p, u: None)
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda s, cfg, mode="restart": (_ for _ in ()).throw(RuntimeError("x")))
+    r = client.post("/settings/interface", data={
+        "address": "10.0.0.1/24", "listen_port": "51820", "mtu": "",
+        "csrf_token": token}, follow_redirects=True)
+    assert "será repetido automaticamente".encode() in r.data
+
+
+def test_settings_defaults_rejects_bad_endpoint_host(client, workdir):
+    token = _login_csrf(client)
+    r = client.post("/settings/peer-defaults", data={
+        "endpoint_host": "bad host!", "endpoint_port": "51820",
+        "allowed_ips": "0.0.0.0/0", "dns": "", "csrf_token": token},
+        follow_redirects=True)
+    assert "Endpoint host inválido".encode() in r.data
+
+
+def test_settings_defaults_rejects_bad_port(client, workdir):
+    token = _login_csrf(client)
+    r = client.post("/settings/peer-defaults", data={
+        "endpoint_host": "vpn.example.com", "endpoint_port": "99999",
+        "allowed_ips": "0.0.0.0/0", "dns": "", "csrf_token": token},
+        follow_redirects=True)
+    assert "Porta do endpoint inválida".encode() in r.data
+
+
+def test_settings_defaults_config_write_failure(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.config.save_config",
+                        lambda p, c: (_ for _ in ()).throw(OSError("disk full")))
+    r = client.post("/settings/peer-defaults", data={
+        "endpoint_host": "vpn.example.com", "endpoint_port": "51820",
+        "allowed_ips": "0.0.0.0/0", "dns": "", "csrf_token": token},
+        follow_redirects=True)
+    assert "Falha ao gravar config.ini".encode() in r.data
+
+
+def test_settings_language_config_write_failure(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.config.save_config",
+                        lambda p, c: (_ for _ in ()).throw(OSError("disk full")))
+    r = client.post("/settings/language", data={
+        "language": "en", "csrf_token": token}, follow_redirects=True)
+    assert "Falha ao gravar config.ini".encode() in r.data
+
+
+def test_rotate_key_conf_missing(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("PRIV=", "PUB="))
+    monkeypatch.setattr("wg_admin.wg.update_interface_in_conf",
+                        lambda p, u: (_ for _ in ()).throw(FileNotFoundError("gone")))
+    r = client.post("/settings/rotate-key", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert "Conf não encontrado".encode() in r.data
+
+
+def test_rotate_key_generic_failure(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("PRIV=", "PUB="))
+    monkeypatch.setattr("wg_admin.wg.update_interface_in_conf",
+                        lambda p, u: (_ for _ in ()).throw(RuntimeError("x")))
+    r = client.post("/settings/rotate-key", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert "Falha ao rodar a chave".encode() in r.data
+
+
+def test_rotate_key_apply_failure(client, workdir, monkeypatch):
+    token = _login_csrf(client)
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("PRIV=", "PUB="))
+    monkeypatch.setattr("wg_admin.wg.update_interface_in_conf", lambda p, u: None)
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda s, cfg, mode="restart": (_ for _ in ()).throw(RuntimeError("x")))
+    r = client.post("/settings/rotate-key", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert "apply ao wg falhou".encode() in r.data
+
+
+def test_login_429_after_five_failures(client, workdir):
+    for _ in range(5):
+        r = client.post("/login", data={"password": "wrong"})
+        assert r.status_code == 200
+    r = client.post("/login", data={"password": "wrong"})
+    assert r.status_code == 429
+    assert "Muitas tentativas".encode() in r.data
+
+
+def test_500_handler_renders_error_page(client):
+    app = client.application
+    old = (app.config.get("TESTING"), app.config.get("PROPAGATE_EXCEPTIONS"))
+    app.config["TESTING"] = False
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+    try:
+        @app.route("/__boom")
+        def __boom():
+            raise RuntimeError("boom")
+        r = client.get("/__boom")
+        assert r.status_code == 500
+        assert "Erro interno".encode() in r.data
+    finally:
+        app.config["TESTING"], app.config["PROPAGATE_EXCEPTIONS"] = old
+
+
+def test_login_without_auth_ini_fails_closed(client, workdir):
+    (workdir["secrets_dir"] / "auth.ini").unlink()
+    r = client.post("/login", data={"password": "anything"})
+    assert r.status_code == 200  # re-renders, never a 500
+    assert "Credenciais inválidas".encode() in r.data
+
+
+def test_login_with_garbage_session_epoch(client, workdir):
+    (workdir["secrets_dir"] / "auth.ini").write_text(
+        "password_hash = " + __import__("wg_admin.crypto", fromlist=["crypto"]).hash_password("ok-pw")
+        + "\nsession_epoch = banana\n")
+    r = client.post("/login", data={"password": "ok-pw"})
+    assert r.status_code in (301, 302)
+
+
+def test_valid_wg_private_key_malformed_rejected():
+    from wg_admin.app import _valid_wg_private_key
+    assert _valid_wg_private_key("not-base64!", "PUB") is False
+
+
+def test_valid_wg_private_key_wg_error_rejected(monkeypatch):
+    from wg_admin import app as app_mod
+    monkeypatch.setattr("wg_admin.wg.wg_pubkey",
+                        lambda priv: (_ for _ in ()).throw(RuntimeError("wg gone")))
+    assert app_mod._valid_wg_private_key("A" * 43 + "=", "PUB") is False
+
+
+def test_server_pubkey_falls_back_to_config(make_app, monkeypatch):
+    app = make_app(language="pt",
+                   extra_config="[wg]\nserver_public_key = CFGPUBKEY=\n")
+    monkeypatch.setattr("wg_admin.wg.wg_server_public_key",
+                        lambda iface: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setattr("wg_admin.wg.wg_show_dump", lambda iface: [])
+    monkeypatch.setattr("wg_admin.wg.wg_interface_active", lambda iface: False)
+    from wg_admin import state as state_mod
+    s = state_mod.empty_state()
+    s["peers"] = [{"id": "k1", "name": "x", "notes": "", "public_key": "PUB",
+                   "private_key_enc": state_mod.encrypt_private_key("PRIV=", app.config["MASTER_KEY"]),
+                   "ip": "10.0.0.2", "disabled": False,
+                   "created_at": "2026-06-17T00:00:00Z"}]
+    import pathlib
+    state_mod.save_state(pathlib.Path("/nonexistent-never") if False else _app_state_path(app), s,
+                         app.config["MASTER_KEY"])
+    c = app.test_client()
+    c.post("/login", data={"password": "pw"})
+    body = c.get("/peers/k1/conf").get_data(as_text=True)
+    assert "PublicKey = CFGPUBKEY=" in body
+
+
+def _app_state_path(app):
+    from wg_admin import app as app_mod
+    return app_mod.STATE_PATH
+
+
+def test_settings_page_survives_conf_parse_error(client, monkeypatch):
+    _login_csrf(client)
+    monkeypatch.setattr("wg_admin.wg.parse_wg_conf",
+                        lambda text: (_ for _ in ()).throw(OSError("io")))
+    r = client.get("/settings")
+    assert r.status_code == 200
+
+
+# ─── v0.3.3 coverage push: final micro-batch ────────────────────────────────
+
+def test_index_redirects_to_peers_when_logged_in(client):
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/")
+    assert r.status_code in (301, 302)
+    assert "/peers" in r.headers["Location"]
+
+
+def test_schedule_update_testing_mode_short_circuits(client):
+    from wg_admin import app as app_mod
+    assert app_mod._schedule_update(client.application, "v9.9.9") is True
+
+
+def test_context_processor_fallback_on_bandwidth_error(client, monkeypatch):
+    monkeypatch.setattr("wg_admin.bandwidth.load_bandwidth",
+                        lambda p: (_ for _ in ()).throw(OSError("corrupt")))
+    monkeypatch.setattr("wg_admin.wg.wg_interface_active", lambda i: False)
+    r = client.get("/login")
+    assert r.status_code == 200
+
+
+def test_toggle_unknown_peer_404_real_transaction(client, workdir):
+    from wg_admin import state as state_mod
+    state_mod.save_state(workdir["state_path"], state_mod.empty_state(),
+                         client.application.config["MASTER_KEY"])
+    client.post("/login", data={"password": "test-password"})
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    assert client.post("/peers/ghost/toggle", data={"csrf_token": token}).status_code == 404
+
+
+def test_peer_edit_unknown_peer_404(client, workdir):
+    from wg_admin import state as state_mod
+    state_mod.save_state(workdir["state_path"], state_mod.empty_state(),
+                         client.application.config["MASTER_KEY"])
+    client.post("/login", data={"password": "test-password"})
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    assert client.post("/peers/ghost/edit",
+                       data={"name": "x", "csrf_token": token}).status_code == 404
+
+
+def test_peer_edit_deleted_between_check_and_transaction(client, workdir, monkeypatch):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    from wg_admin import state as state_mod
+    real_find = state_mod.find_peer_by_id
+    seen = {"n": 0}
+
+    def vanishing(st, peer_id):
+        seen["n"] += 1
+        return real_find(st, peer_id) if seen["n"] == 1 else None
+    monkeypatch.setattr("wg_admin.state.find_peer_by_id", vanishing)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/edit", data={"name": "x", "csrf_token": token})
+    assert r.status_code == 404
+
+
+def test_peer_edit_get_renders_form(client, workdir):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    r = client.get("/peers/p1/edit")
+    assert r.status_code == 200
+    assert "Editar peer".encode() in r.data
+
+
+def test_peer_edit_garbage_quota_defaults_to_zero(client, workdir):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/edit", data={"name": "orig", "quota_gb": "abc",
+                                            "csrf_token": token})
+    assert r.status_code in (301, 302)
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"],
+                              client.application.config["MASTER_KEY"])
+    assert st["peers"][0]["quota_gb"] == 0.0
+
+
+def test_peer_edit_blank_name_re_renders(client, workdir):
+    seed_test_peer(workdir, client)
+    client.post("/login", data={"password": "test-password"})
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/edit", data={"name": "", "csrf_token": token})
+    assert r.status_code == 200
+    assert "Nome inválido".encode() in r.data
+
+
+def test_unflag_write_failure_is_logged_not_fatal(client, workdir, monkeypatch):
+    from wg_admin import state as state_mod
+    key = client.application.config["MASTER_KEY"]
+    s = state_mod.empty_state()
+    s["pending_apply"] = True
+    s["peers"] = [{"id": "p1", "name": "x", "notes": "", "public_key": "PUB",
+                   "private_key_enc": state_mod.encrypt_private_key("K=", key),
+                   "ip": "10.0.0.2", "disabled": False,
+                   "created_at": "2026-06-17T00:00:00Z"}]
+    state_mod.save_state(workdir["state_path"], s, key)
+
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda st, cfg, mode="restart": None)
+    real_update = state_mod.update_state
+    calls = {"n": 0}
+
+    def flaky(path, k, mut):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_update(path, k, mut)
+        raise RuntimeError("unflag write failed")
+    monkeypatch.setattr("wg_admin.state.update_state", flaky)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    r = client.post("/peers/p1/toggle", data={"csrf_token": token},
+                    follow_redirects=True)
+    assert r.status_code == 200  # toggle still succeeds; unflag failure logged
+
+
+def test_toggle_success_clears_top_level_pending_flag(client, workdir, monkeypatch):
+    from wg_admin import state as state_mod
+    key = client.application.config["MASTER_KEY"]
+    s = state_mod.empty_state()
+    s["pending_apply"] = True
+    s["peers"] = [{"id": "p1", "name": "x", "notes": "", "public_key": "PUB",
+                   "private_key_enc": state_mod.encrypt_private_key("K=", key),
+                   "ip": "10.0.0.2", "disabled": False,
+                   "created_at": "2026-06-17T00:00:00Z"}]
+    state_mod.save_state(workdir["state_path"], s, key)
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg",
+                        lambda st, cfg, mode="restart": None)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    client.post("/peers/p1/toggle", data={"csrf_token": token})
+    st = state_mod.load_state(workdir["state_path"], key)
+    assert st["pending_apply"] is False
+
+
+def test_server_pubkey_prefers_live_wg_show(make_app, monkeypatch):
+    app = make_app(language="pt",
+                   extra_config="[wg]\nserver_public_key = STALEKEY=\n")
+    monkeypatch.setattr("wg_admin.wg.wg_server_public_key", lambda iface: "LIVEPUB=")
+    monkeypatch.setattr("wg_admin.wg.wg_show_dump", lambda iface: [])
+    from wg_admin import app as app_mod, state as state_mod
+    s = state_mod.empty_state()
+    s["peers"] = [{"id": "k1", "name": "x", "notes": "", "public_key": "PUB",
+                   "private_key_enc": state_mod.encrypt_private_key("PRIV=", app.config["MASTER_KEY"]),
+                   "ip": "10.0.0.2", "disabled": False,
+                   "created_at": "2026-06-17T00:00:00Z"}]
+    state_mod.save_state(app_mod.STATE_PATH, s, app.config["MASTER_KEY"])
+    c = app.test_client()
+    c.post("/login", data={"password": "pw"})
+    body = c.get("/peers/k1/conf").get_data(as_text=True)
+    assert "PublicKey = LIVEPUB=" in body
+    assert "STALEKEY" not in body
+
+
+def test_settings_read_iface_survives_parse_oserror(client, workdir, monkeypatch):
+    client.post("/login", data={"password": "test-password"})
+    (workdir["tmp_path"] / "wg0.conf").write_text("[Interface]\nAddress = 10.0.0.1/24\n")
+    monkeypatch.setattr("wg_admin.app.WG_CONF_DIR", workdir["tmp_path"])
+    monkeypatch.setattr("wg_admin.wg.parse_wg_conf",
+                        lambda text: (_ for _ in ()).throw(OSError("io")))
+    r = client.get("/settings")
+    assert r.status_code == 200
+
+
+def test_valid_endpoint_host_accepts_bare_ip():
+    from wg_admin.app import _valid_endpoint_host
+    assert _valid_endpoint_host("192.0.2.10") is True
+    assert _valid_endpoint_host("2001:db8::1") is True
+    assert _valid_endpoint_host("vpn.example.com") is True
+    assert _valid_endpoint_host("") is False
+    assert _valid_endpoint_host("has space.example.com") is False
+    assert _valid_endpoint_host("a" * 254) is False
+
+
+def test_settings_page_reads_real_conf(client, workdir, monkeypatch):
+    """_read_iface success path with a deterministic patched conf dir."""
+    client.post("/login", data={"password": "test-password"})
+    (workdir["tmp_path"] / "wg0.conf").write_text(
+        "[Interface]\nAddress = 10.9.9.1/24\nListenPort = 51820\nPrivateKey = X=\n")
+    monkeypatch.setattr("wg_admin.app.WG_CONF_DIR", workdir["tmp_path"])
+    html = client.get("/settings").get_data(as_text=True)
+    assert "10.9.9.1/24" in html
+
+
+def test_settings_page_without_conf_shows_empty_iface(client, workdir, monkeypatch):
+    """_read_iface with no wg0.conf in the conf dir (CI machines)."""
+    client.post("/login", data={"password": "test-password"})
+    empty = workdir["tmp_path"] / "no-conf-here"
+    empty.mkdir()
+    monkeypatch.setattr("wg_admin.app.WG_CONF_DIR", empty)
+    r = client.get("/settings")
+    assert r.status_code == 200

@@ -60,7 +60,7 @@ def format_bytes(n: int) -> str:
     for unit, factor in units:
         if n < factor * 1024 or unit == "PB":
             return f"{n / factor:.1f} {unit}"
-    return f"{n / 1024**5:.1f} PB"
+    return f"{n / 1024**5:.1f} PB"  # pragma: no cover — loop always returns at PB
 
 
 def sparkline_path(values: list, width: int = 80, height: int = 24) -> str:
@@ -255,5 +255,5 @@ def _run_quota_check(bw_path: Path) -> None:
         print(f"WARN: quota check failed: {e}", file=sys.stderr)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — CLI entrypoint
     sys.exit(main())
