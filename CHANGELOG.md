@@ -4,6 +4,11 @@ All notable changes to wg-admin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-11-01
+
+### Fixed
+- **Brand no longer reads "wg wg-admin"** — the sidebar brand and the login logo showed the red `wg` badge followed by the wordmark `wg-admin`, which reads as a duplicated name. Both now show just **wg-admin** (red accent on the dash); the `wg` badge lives on in the favicon.
+
 ## [0.3.0] — 2026-11-01
 
 ### Security
