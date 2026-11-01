@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt">
+<html lang="{{ lang }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -16,7 +16,7 @@
     </a>
     <div class="sidebar-status">
       <span class="status-dot"></span>
-      <span class="status-text">service online</span>
+      <span class="status-text">{{ t('service online') }}</span>
     </div>
   </div>
 
@@ -24,25 +24,25 @@
   <div class="sidebar-vpn">
     <div class="vpn-status">
       <span class="dot {{ 'active' if vpn_active else 'inactive' }}"></span>
-      VPN: {{ 'ativa' if vpn_active else 'desativada' }}
+      {{ t('VPN: active') if vpn_active else t('VPN: inactive') }}
     </div>
     <div class="quota-display {{ 'danger' if global_exceeded else '' }}">
-      <span class="text-sm text-muted">30d</span>
+      <span class="text-sm text-muted">{{ t('30d') }}</span>
       {{ global_used_gb|round(1) }}{% if global_quota_gb > 0 %} / {{ global_quota_gb|int }}{% endif %} GB
     </div>
     {% if vpn_active %}
     <form method="post" action="{{ url_for('vpn_toggle') }}"
-          onsubmit="return confirm('Desativar VPN? Todos os peers vão desconectar imediatamente.')">
+          data-confirm="{{ t('Deactivate VPN? All peers disconnect immediately.') }}">
       <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
       <button type="submit" class="danger btn-block">
-        Desativar VPN
+        {{ t('Deactivate VPN') }}
       </button>
     </form>
     {% else %}
     <form method="post" action="{{ url_for('vpn_toggle') }}">
       <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
       <button type="submit" class="success btn-block">
-        Ativar VPN
+        {{ t('Activate VPN') }}
       </button>
     </form>
     {% endif %}
@@ -51,25 +51,25 @@
   <nav class="sidebar-nav">
     <a href="{{ url_for('peers_list') }}" class="sidebar-link {{ 'active' if request.endpoint in ('peers_list', 'peer_new', 'peer_edit') }}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <span>Peers</span>
+      <span>{{ t('Peers') }}</span>
     </a>
     <a href="{{ url_for('change_password') }}" class="sidebar-link {{ 'active' if request.endpoint == 'change_password' }}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-      <span>Password</span>
+      <span>{{ t('Password') }}</span>
     </a>
     <a href="{{ url_for('server_status') }}" class="sidebar-link {{ 'active' if request.endpoint == 'server_status' }}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="6" rx="1"/><rect x="3" y="15" width="18" height="6" rx="1"/><line x1="7" y1="6" x2="7.01" y2="6"/><line x1="7" y1="18" x2="7.01" y2="18"/></svg>
-      <span>Server Status</span>
+      <span>{{ t('Server Status') }}</span>
     </a>
-    <a href="{{ url_for('settings_page') }}" class="sidebar-link {{ 'active' if request.endpoint in ('settings_page', 'settings_interface', 'settings_peer_defaults', 'settings_rotate_key') }}">
+    <a href="{{ url_for('settings_page') }}" class="sidebar-link {{ 'active' if request.endpoint in ('settings_page', 'settings_interface', 'settings_peer_defaults', 'settings_rotate_key', 'settings_language') }}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      <span>Configurações</span>
+      <span>{{ t('Settings') }}</span>
     </a>
   </nav>
 
   <div class="sidebar-footer">
     <div class="sidebar-meta">
-      <span class="meta-label">// versão</span>
+      <span class="meta-label">{{ t('// version') }}</span>
       <span class="meta-value" id="wg-version" data-csrf="{{ session.csrf_token }}">{{ version }}</span>
     </div>
     <a href="https://github.com/joaopaulooooo/wg-admin" target="_blank" rel="noopener" class="sidebar-github">
@@ -79,7 +79,7 @@
     <form method="post" action="{{ url_for('logout') }}">
       <button type="submit" class="sidebar-logout">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        <span>Sair</span>
+        <span>{{ t('Sign out') }}</span>
       </button>
     </form>
   </div>
@@ -103,6 +103,17 @@
 {% if session.admin %}
 <script>
 (function() {
+  // Confirm dialogs live in data-confirm attributes (properly HTML-escaped
+  // by Jinja) — never interpolated into inline JS strings.
+  document.querySelectorAll('form[data-confirm]').forEach(function(f) {
+    f.addEventListener('submit', function(e) {
+      if (!window.confirm(f.dataset.confirm)) e.preventDefault();
+    });
+  });
+})();
+</script>
+<script>
+(function() {
   // Self-update: check GitHub via the panel (server-side, cached 1h), show a
   // button next to the version only when a newer tag exists.
   var host = document.getElementById('wg-version');
@@ -114,21 +125,18 @@
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'update-btn';
-    btn.title = 'Instalar ' + d.latest;
-    btn.textContent = '↻ atualizar p/ ' + d.latest.replace(/^v/, '');
+    btn.title = d.latest;
+    btn.textContent = {{ t('↻ update to')|tojson }} + ' ' + d.latest.replace(/^v/, '');
 
     btn.addEventListener('click', function() {
-      if (!window.confirm(
-          'Atualizar wg-admin para ' + d.latest + '?\n\n' +
-          'O painel descarrega a versão nova e reinicia sozinho (normalmente <1 min).\n' +
-          'Os peers WireGuard NÃO são afetados e a tua sessão mantém-se.\n' +
-          'Progresso: journalctl -u wg-admin-selfupdate -f')) return;
+      var msg = {{ t('Update to {tag}? The panel downloads the new version and restarts itself (usually under a minute). WireGuard peers are NOT affected and your session is kept. Progress: journalctl -u wg-admin-selfupdate -f')|tojson }};
+      if (!window.confirm(msg.replace('{tag}', d.latest))) return;
 
       var fd = new FormData();
       fd.append('csrf_token', host.dataset.csrf);
       fd.append('tag', d.latest);
       btn.disabled = true;
-      btn.textContent = 'a atualizar…';
+      btn.textContent = {{ t('updating…')|tojson }};
 
       fetch('/settings/update', { method: 'POST', body: fd }).catch(function() {});
 
@@ -156,5 +164,3 @@
 {% endif %}
 </body>
 </html>
-
-

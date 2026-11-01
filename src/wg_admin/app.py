@@ -21,7 +21,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-from . import authlog, bandwidth, confgen, config, crypto, ratelimit, serverstats, state, wg
+from . import authlog, bandwidth, confgen, config, crypto, i18n, ratelimit, serverstats, state, wg
 from .version import __version__
 
 # These paths are patched in tests via monkeypatch.
@@ -258,6 +258,12 @@ def create_app() -> Flask:
     master_key = (SECRETS_DIR / "master.key").read_bytes()
     session_key = (SECRETS_DIR / "session.key").read_bytes()
 
+    # Server-wide UI language (config.ini [server] language; 'en' default).
+    language = i18n.normalize_language(cfg["server"].get("language", i18n.DEFAULT_LANGUAGE))
+
+    def t(text: str, /, **kwargs) -> str:
+        return i18n.translate(language, text, **kwargs)
+
     app.secret_key = session_key
     app.config.update(
         SESSION_COOKIE_NAME="wg_admin_session",
@@ -316,6 +322,7 @@ def create_app() -> Flask:
                 "global_quota_gb": global_q,
                 "global_exceeded": quota_mod.global_quota_exceeded(bw, global_q),
                 "version": __version__,
+                "lang": language,
             }
         except Exception:
             # If anything fails (bandwidth.json missing, etc.) — don't break every page
@@ -325,6 +332,7 @@ def create_app() -> Flask:
                 "global_quota_gb": 0.0,
                 "global_exceeded": False,
                 "version": __version__,
+                "lang": language,
             }
 
     def login_required(f):
@@ -342,6 +350,7 @@ def create_app() -> Flask:
         return wrapper
 
     app.jinja_env.filters["duration"] = format_duration
+    app.jinja_env.globals["t"] = t
 
     @app.route("/")
     @login_required
@@ -402,7 +411,7 @@ def create_app() -> Flask:
                     AUTHLOG_PATH, success=False,
                     client_ip=client_ip, user_agent=user_agent,
                 )
-                flash("Credenciais inválidas", "error")
+                flash(t("Invalid credentials."), "error")
         return render_template("login.html")
 
     @app.route("/logout", methods=["POST"])
@@ -420,22 +429,22 @@ def create_app() -> Flask:
 
             current_hash, epoch = _read_auth_ini()
             if not crypto.verify_password(current, current_hash):
-                flash("Password atual incorreta.", "error")
+                flash(t("Current password is incorrect."), "error")
                 return render_template("change_password.html"), 400
 
             if len(new) < 8:
-                flash("Nova password tem de ter pelo menos 8 caracteres.", "error")
+                flash(t("New password must be at least 8 characters."), "error")
                 return render_template("change_password.html"), 400
 
             if new != confirm:
-                flash("As passwords novas não coincidem.", "error")
+                flash(t("The new passwords do not match."), "error")
                 return render_template("change_password.html"), 400
 
             # Bumping the epoch invalidates every existing session,
             # including this one — the admin logs in again everywhere.
             _write_auth_ini(crypto.hash_password(new), epoch + 1)
             session.clear()
-            flash("Password atualizada. Inicia sessão novamente.", "success")
+            flash(t("Password updated. Sign in again."), "success")
             return redirect(url_for("login"))
         return render_template("change_password.html")
 
@@ -543,10 +552,10 @@ def create_app() -> Flask:
             except ValueError:
                 quota_gb = 0.0
             if not _valid_peer_name(name):
-                flash("Nome inválido (obrigatório, máx. 100 caracteres, sem quebras de linha).", "error")
+                flash(t("Invalid name (required, max 100 characters, no line breaks)."), "error")
                 return render_template("peer_form.html")
             if not math.isfinite(quota_gb) or quota_gb < 0:
-                flash("Cota inválida (número não negativo).", "error")
+                flash(t("Invalid quota (non-negative number)."), "error")
                 return render_template("peer_form.html")
 
             priv, pub = wg.wg_genkey()
@@ -570,9 +579,9 @@ def create_app() -> Flask:
 
             s, ip = state.update_state(STATE_PATH, app.config["MASTER_KEY"], mut)
             if not _apply_or_flag(s, mode="syncconf"):
-                flash("Peer criado no estado, mas falhou apply ao wg — será repetido automaticamente", "error")
+                flash(t("Peer created in state, but the apply to wg failed — it will be retried automatically"), "error")
                 return redirect(url_for("peers_list"))
-            flash(f"Peer criado: {name} ({ip})", "success")
+            flash(t("Peer created: {name} ({ip})", name=name, ip=ip), "success")
             return redirect(url_for("peers_list"))
         return render_template("peer_form.html")
 
@@ -587,8 +596,8 @@ def create_app() -> Flask:
         except KeyError:
             abort(404)
         if not _apply_or_flag(s, mode="restart"):
-            flash("Peer removido do estado, mas apply falhou — será repetido automaticamente", "error")
-        flash("Peer apagado", "success")
+            flash(t("Peer removed from state, but the apply failed — it will be retried automatically"), "error")
+        flash(t("Peer deleted"), "success")
         return redirect(url_for("peers_list"))
 
     @app.route("/peers/<peer_id>/toggle", methods=["POST"])
@@ -604,7 +613,7 @@ def create_app() -> Flask:
         except KeyError:
             abort(404)
         if not _apply_or_flag(s, mode="restart"):
-            flash("Toggle registrado mas apply falhou — será repetido automaticamente", "error")
+            flash(t("Toggle registered but the apply failed — it will be retried automatically"), "error")
         return redirect(url_for("peers_list"))
 
     def _get_server_public_key() -> str:
@@ -630,7 +639,7 @@ def create_app() -> Flask:
         if peer is None:
             abort(404)
         if not peer.get("private_key_enc"):
-            flash("Este peer foi importado do wg0.conf — a chave privada só existe no dispositivo cliente. Não é possível gerar .conf nem QR. Cria um peer novo ou apaga este e volta a importar manualmente.", "error")
+            flash(t("This peer was imported from wg0.conf — the private key only exists on the client device. A .conf or QR cannot be generated. Create a new peer or delete and re-import this one manually."), "error")
             return redirect(url_for("peers_list"))
         peer_cfg = confgen.PeerConfig(
             private_key=state.decrypt_private_key(peer["private_key_enc"], app.config["MASTER_KEY"]),
@@ -660,7 +669,7 @@ def create_app() -> Flask:
         if peer is None:
             abort(404)
         if not peer.get("private_key_enc"):
-            flash("Peer importado — chave privada não disponível. Não é possível gerar QR.", "error")
+            flash(t("Imported peer — private key not available. QR cannot be generated."), "error")
             return redirect(url_for("peers_list"))
         peer_cfg = confgen.PeerConfig(
             private_key=state.decrypt_private_key(peer["private_key_enc"], app.config["MASTER_KEY"]),
@@ -789,6 +798,8 @@ def create_app() -> Flask:
             current_pub=_current_server_pubkey(),
             peer_defaults=cfg["peer_defaults"],
             interface=cfg["wg"]["interface"],
+            language=language,
+            languages=i18n.LANGUAGES,
         )
 
     @app.route("/settings/interface", methods=["POST"])
@@ -803,13 +814,13 @@ def create_app() -> Flask:
         try:
             ipaddress.ip_network(address, strict=False)
         except ValueError:
-            flash("Endereço inválido — usa o formato CIDR, ex: 10.0.0.1/24", "error")
+            flash(t("Invalid address — use CIDR format, e.g. 10.0.0.1/24"), "error")
             return redirect(url_for("settings_page"))
         if not listen_port.isdigit() or not (1 <= int(listen_port) <= 65535):
-            flash("ListenPort inválido (1-65535)", "error")
+            flash(t("Invalid ListenPort (1-65535)"), "error")
             return redirect(url_for("settings_page"))
         if mtu and (not mtu.isdigit() or not (1280 <= int(mtu) <= 9000)):
-            flash("MTU inválido (1280-9000, ou vazio)", "error")
+            flash(t("Invalid MTU (1280-9000, or empty)"), "error")
             return redirect(url_for("settings_page"))
 
         updates = {
@@ -823,16 +834,16 @@ def create_app() -> Flask:
             wg.update_interface_in_conf(_conf_path(), updates)
             s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
         except FileNotFoundError:
-            flash(f"Conf não encontrado: {_conf_path()}", "error")
+            flash(t("Conf not found: {path}", path=_conf_path()), "error")
             return redirect(url_for("settings_page"))
         except Exception:
             app.logger.exception("Failed to update interface settings")
-            flash("Falha ao aplicar — conf não alterado ou parcialmente aplicado, ver logs", "error")
+            flash(t("Failed to apply — conf unchanged or partially applied, check logs"), "error")
             return redirect(url_for("settings_page"))
         if not _apply_or_flag(s, mode="restart"):
-            flash("Falha ao aplicar ao WireGuard — será repetido automaticamente (ver logs)", "error")
+            flash(t("Failed to apply to WireGuard — it will be retried automatically (check logs)"), "error")
             return redirect(url_for("settings_page"))
-        flash("Interface atualizada e wg-quick reiniciado — peers reconectam em segundos", "success")
+        flash(t("Interface updated and wg-quick restarted — peers reconnect in seconds"), "success")
         return redirect(url_for("settings_page"))
 
     @app.route("/settings/peer-defaults", methods=["POST"])
@@ -844,22 +855,22 @@ def create_app() -> Flask:
         dns = request.form.get("dns", "").strip()
 
         if not _valid_endpoint_host(endpoint_host):
-            flash("Endpoint host inválido (hostname ou IP, sem espaços nem quebras de linha).", "error")
+            flash(t("Invalid endpoint host (hostname or IP, no spaces or line breaks)."), "error")
             return redirect(url_for("settings_page"))
         if not endpoint_port.isdigit() or not (1 <= int(endpoint_port) <= 65535):
-            flash("Porta do endpoint inválida (1-65535)", "error")
+            flash(t("Invalid endpoint port (1-65535)"), "error")
             return redirect(url_for("settings_page"))
         try:
             for cidr in [c.strip() for c in allowed_ips.split(",") if c.strip()]:
                 ipaddress.ip_network(cidr, strict=False)
         except ValueError:
-            flash("AllowedIPs inválido — lista de CIDRs separados por vírgula", "error")
+            flash(t("Invalid AllowedIPs — comma-separated list of CIDRs"), "error")
             return redirect(url_for("settings_page"))
         try:
             for ip in [d.strip() for d in dns.split(",") if d.strip()]:
                 ipaddress.ip_address(ip)
         except ValueError:
-            flash("DNS inválido — lista de IPs separados por vírgula (ou vazio)", "error")
+            flash(t("Invalid DNS — comma-separated list of IPs (or empty)"), "error")
             return redirect(url_for("settings_page"))
 
         cfg["peer_defaults"]["endpoint_host"] = endpoint_host
@@ -870,9 +881,9 @@ def create_app() -> Flask:
             config.save_config(CONFIG_PATH, cfg)
         except Exception:
             app.logger.exception("Failed to save config.ini")
-            flash("Falha ao gravar config.ini — ver logs", "error")
+            flash(t("Failed to write config.ini — check logs"), "error")
             return redirect(url_for("settings_page"))
-        flash("Defaults gravados — wg-admin reinicia em segundos para recarregar", "success")
+        flash(t("Defaults saved — wg-admin restarts in a few seconds to reload"), "success")
         _schedule_self_restart(app)
         return redirect(url_for("settings_page"))
 
@@ -884,19 +895,17 @@ def create_app() -> Flask:
             wg.update_interface_in_conf(_conf_path(), {"PrivateKey": priv})
             s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
         except FileNotFoundError:
-            flash(f"Conf não encontrado: {_conf_path()}", "error")
+            flash(t("Conf not found: {path}", path=_conf_path()), "error")
             return redirect(url_for("settings_page"))
         except Exception:
             app.logger.exception("Failed to rotate server key")
-            flash("Falha ao rodar a chave — ver logs (conf pode ter ficado com a chave antiga)", "error")
+            flash(t("Failed to rotate the key — check logs (the conf may still have the old key)"), "error")
             return redirect(url_for("settings_page"))
         if not _apply_or_flag(s, mode="restart"):
-            flash("Chave rodada no conf, mas apply ao wg falhou — será repetido automaticamente", "error")
+            flash(t("Key rotated in conf, but the apply to wg failed — it will be retried automatically"), "error")
             return redirect(url_for("settings_page"))
         flash(
-            f"Private key rodada. Nova public key: {pub} — "
-            "os .conf/QR dos peers já são gerados com a nova chave; "
-            "os clientes têm de reimportar a config.",
+            t("Private key rotated. New public key: {pub} — peer .conf/QR files are already generated with the new key; clients must re-import the config.", pub=pub),
             "warning",
         )
         return redirect(url_for("settings_page"))
@@ -904,7 +913,7 @@ def create_app() -> Flask:
     @app.route("/settings/restart-wg-admin", methods=["POST"])
     @login_required
     def settings_restart_wg_admin():
-        flash("Reinício do wg-admin agendado (~2s) — aguarde e recarregue a página", "warning")
+        flash(t("wg-admin restart scheduled (~2s) — wait and reload the page"), "warning")
         _schedule_self_restart(app)
         return redirect(url_for("settings_page"))
 
@@ -913,7 +922,7 @@ def create_app() -> Flask:
     def settings_restart_wireguard():
         interface = cfg["wg"]["interface"]
         flash(
-            f"Reinício do wg-quick@{interface} agendado (~1s) — os peers desconectam e reconectam sozinhos",
+            t("wg-quick@{iface} restart scheduled (~1s) — peers disconnect and reconnect on their own", iface=interface),
             "warning",
         )
         _schedule_shell(app, f"sleep 1; systemctl restart wg-quick@{interface}")
@@ -933,21 +942,39 @@ def create_app() -> Flask:
         tag_t = _version_tuple(tag)
         cur_t = _version_tuple("v" + __version__)
         if not tag_t or not cur_t:
-            flash("Tag de versão inválida.", "error")
+            flash(t("Invalid version tag."), "error")
             return redirect(url_for("settings_page"))
         if tag_t <= cur_t:
-            flash(f"Já estás na versão mais recente ({__version__}).", "success")
+            flash(t("You are already on the latest version ({version}).", version=__version__), "success")
             return redirect(url_for("settings_page"))
         if wg.unit_is_active(UPDATE_UNIT):
-            flash("Já há uma atualização em curso.", "error")
+            flash(t("An update is already in progress."), "error")
             return redirect(url_for("settings_page"))
         _schedule_update(app, tag)
         flash(
-            f"Atualização para {tag} agendada — o painel reinicia sozinho no fim "
-            "(a sessão mantém-se; progresso em `journalctl -u wg-admin-selfupdate -f`).",
+            t("Update to {tag} scheduled — the panel restarts by itself at the end (the session is kept; progress in journalctl -u wg-admin-selfupdate -f).", tag=tag),
             "warning",
         )
         return redirect(url_for("peers_list"))
+
+    @app.route("/settings/language", methods=["POST"])
+    @login_required
+    def settings_language():
+        new_lang = request.form.get("language", "").strip()
+        if new_lang not in i18n.LANGUAGES:
+            flash(t("Invalid language."), "error")
+            return redirect(url_for("settings_page"))
+        cfg["server"]["language"] = new_lang
+        try:
+            config.save_config(CONFIG_PATH, cfg)
+        except Exception:
+            app.logger.exception("Failed to save config.ini")
+            flash(t("Failed to write config.ini — check logs"), "error")
+            return redirect(url_for("settings_page"))
+        flash(t("Language set to {language} — wg-admin restarts in a few seconds.",
+                language=i18n.LANGUAGES[new_lang]), "success")
+        _schedule_self_restart(app)
+        return redirect(url_for("settings_page"))
 
     @app.route("/peers/<peer_id>/edit", methods=["GET", "POST"])
     @login_required
@@ -966,13 +993,13 @@ def create_app() -> Flask:
             except ValueError:
                 quota_gb = 0.0
             if not _valid_peer_name(name):
-                flash("Nome inválido (obrigatório, máx. 100 caracteres, sem quebras de linha).", "error")
+                flash(t("Invalid name (required, max 100 characters, no line breaks)."), "error")
                 return render_template("peer_edit.html", peer=peer)
             if not math.isfinite(quota_gb) or quota_gb < 0:
-                flash("Cota inválida (número não negativo).", "error")
+                flash(t("Invalid quota (non-negative number)."), "error")
                 return render_template("peer_edit.html", peer=peer)
             if new_priv and not _valid_wg_private_key(new_priv, peer.get("public_key", "")):
-                flash("Chave privada inválida: tem de ser base64 (44 chars) e corresponder à public key do peer.", "error")
+                flash(t("Invalid private key: must be base64 (44 chars) and match the peer public key."), "error")
                 return render_template("peer_edit.html", peer=peer)
 
             def mut(st):
@@ -991,9 +1018,9 @@ def create_app() -> Flask:
             except KeyError:
                 abort(404)
             if new_priv:
-                flash("Chave privada atualizada — já podes descarregar .conf e QR", "success")
+                flash(t("Private key updated — you can now download .conf and QR"), "success")
             else:
-                flash("Peer atualizado", "success")
+                flash(t("Peer updated"), "success")
             return redirect(url_for("peers_list"))
         return render_template("peer_edit.html", peer=peer)
 
@@ -1015,12 +1042,10 @@ def create_app() -> Flask:
         except KeyError:
             abort(404)
         if not _apply_or_flag(s, mode="syncconf"):
-            flash("Chaves geradas no estado, mas apply ao wg falhou — será repetido automaticamente", "error")
+            flash(t("Keys generated in state, but the apply to wg failed — it will be retried automatically"), "error")
             return redirect(url_for("peers_list"))
         flash(
-            f"Novo par de chaves para {peer_name} — "
-            "descarrega o .conf/QR e reimporta no dispositivo; "
-            "a config antiga deixa de funcionar.",
+            t("New keypair for {name} — download the .conf/QR and re-import on the device; the old config stops working.", name=peer_name),
             "warning",
         )
         return redirect(url_for("peers_list"))
@@ -1034,13 +1059,13 @@ def create_app() -> Flask:
                 ["systemctl", "stop", f"wg-quick@{interface}"],
                 capture_output=True, check=True,
             )
-            flash("VPN desativada — todos os peers desconectados", "warning")
+            flash(t("VPN deactivated — all peers disconnected"), "warning")
         else:
             subprocess.run(
                 ["systemctl", "start", f"wg-quick@{interface}"],
                 capture_output=True, check=True,
             )
-            flash("VPN reativada", "success")
+            flash(t("VPN reactivated"), "success")
         ref = request.referrer
         if ref and ref.startswith(request.host_url):
             return redirect(ref)
@@ -1048,20 +1073,20 @@ def create_app() -> Flask:
 
     @app.errorhandler(403)
     def forbidden(e):
-        return render_template("error.html", code=403, message="CSRF token inválido ou sessão expirada."), 403
+        return render_template("error.html", code=403, message=t("Invalid CSRF token or expired session.")), 403
 
     @app.errorhandler(404)
     def not_found(e):
-        return render_template("error.html", code=404, message="Recurso não encontrado."), 404
+        return render_template("error.html", code=404, message=t("Resource not found.")), 404
 
     @app.errorhandler(429)
     def too_many(e):
-        return render_template("error.html", code=429, message="Muitas tentativas de login. Tente novamente mais tarde."), 429
+        return render_template("error.html", code=429, message=t("Too many login attempts. Try again later.")), 429
 
     @app.errorhandler(500)
     def server_error(e):
         app.logger.exception("Internal error")
-        return render_template("error.html", code=500, message="Erro interno."), 500
+        return render_template("error.html", code=500, message=t("Internal error.")), 500
 
     return app
 

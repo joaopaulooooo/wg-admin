@@ -1,46 +1,45 @@
 {% extends "base.html" %}
-{% block title %}Peers — wg-admin{% endblock %}
+{% block title %}{{ t('Peers — wg-admin') }}{% endblock %}
 {% block content %}
 <div class="container">
-  <h1><span class="accent-bar"></span>Peers</h1>
-  <p class="subtitle">// {{ total_peers }} total · {{ connected_count }} ativos</p>
+  <h1><span class="accent-bar"></span>{{ t('Peers') }}</h1>
+  <p class="subtitle">{{ t('// {total} total · {online} active', total=total_peers, online=connected_count) }}</p>
 
   {% if global_exceeded %}
   <div class="banner banner-danger">
-    ⚠ Cota global excedida — {{ global_used_gb|round(1) }} / {{ global_quota_gb|int }} GB · 30d.
-    Considera desativar a VPN no sidebar ou reduzir cotas individuais.
+    ⚠ {{ t('Global quota exceeded — {used} / {quota} GB · 30d. Consider disabling the VPN in the sidebar or reducing individual quotas.', used=global_used_gb|round(1), quota=global_quota_gb|int) }}
   </div>
   {% endif %}
 
   {% if pending_apply %}
   <div class="banner banner-danger">
-    ⠿ A última alteração ainda não foi aplicada ao WireGuard — o sistema repete automaticamente (≤5 min) ou na próxima alteração. Ver logs com `journalctl -u wg-admin -e`.
+    ⠿ {{ t('The last change has not been applied to WireGuard yet — it is retried automatically (within 5 min) or on the next change. Check the logs with journalctl -u wg-admin -e.') }}
   </div>
   {% endif %}
 
   <div class="stats">
     <div class="stat">
-      <span class="stat-label">Total Peers</span>
+      <span class="stat-label">{{ t('Total Peers') }}</span>
       <span class="stat-value">{{ total_peers }}</span>
     </div>
     <div class="stat">
-      <span class="stat-label">Conectados agora</span>
+      <span class="stat-label">{{ t('Connected now') }}</span>
       <span class="stat-value {% if connected_count > 0 %}active{% endif %}">{{ connected_count }}</span>
     </div>
     <div class="stat">
-      <span class="stat-label">Importados</span>
+      <span class="stat-label">{{ t('Imported') }}</span>
       <span class="stat-value">{{ imported_count }}</span>
     </div>
   </div>
 
   <div class="action-bar">
-    <a href="{{ url_for('peer_new') }}" class="btn">+ Novo peer</a>
+    <a href="{{ url_for('peer_new') }}" class="btn">{{ t('+ New peer') }}</a>
   </div>
 
   {% if peer_views %}
   {# Global bandwidth chart #}
   <section class="global-chart">
-    <h3><span class="accent-bar"></span>Tráfego 30d — todos os peers</h3>
+    <h3><span class="accent-bar"></span>{{ t('30-day traffic — all peers') }}</h3>
     <canvas id="global-chart" width="1200" height="200"></canvas>
   </section>
 
@@ -53,11 +52,11 @@
       <div class="peer-card-header">
         <h3 class="peer-name">
           {{ peer.name }}
-          {% if peer.disabled %}<em>(inativo)</em>{% endif %}
-          {% if not peer.private_key_enc %}<em title="Importado do wg0.conf — usa 'Gerar chaves' para desbloquear .conf/QR">🔒</em>{% endif %}
+          {% if peer.disabled %}<em>{{ t('(inactive)') }}</em>{% endif %}
+          {% if not peer.private_key_enc %}<em title="{{ t('Imported from wg0.conf — use Generate keys to unlock .conf/QR') }}">🔒</em>{% endif %}
         </h3>
         <span class="peer-status {{ 'inactive' if peer.disabled or not pv.is_online else '' }}">
-          {% if peer.disabled %}inativo{% elif pv.is_online %}online{% else %}offline{% endif %}
+          {% if peer.disabled %}{{ t('inactive') }}{% elif pv.is_online %}{{ t('online') }}{% else %}{{ t('offline') }}{% endif %}
         </span>
       </div>
 
@@ -65,35 +64,35 @@
         <dt>IP</dt>
         <dd>{{ peer.ip }}</dd>
 
-        <dt>pubkey</dt>
+        <dt>{{ t('pubkey') }}</dt>
         <dd title="{{ peer.public_key }}" style="cursor: help;">
           {{ peer.public_key[:16] }}…{{ peer.public_key[-4:] if peer.public_key else '' }}
         </dd>
 
-        <dt>estado wg</dt>
+        <dt>{{ t('wg state') }}</dt>
         <dd>
-          {% if not status %}<span style="color: var(--danger);">NÃO ENCONTRADO</span>
+          {% if not status %}<span style="color: var(--danger);">{{ t('NOT FOUND') }}</span>
             <div class="text-sm text-muted" style="margin-top: 4px; font-family: var(--font-mono); font-size: 0.7rem;">
-              wg show tem:<br>
+              {{ t('wg show has:') }}<br>
               {% for k in pv.wg_pubkeys %}• {{ k[:20] }}…<br>{% endfor %}
-              {% if not pv.wg_pubkeys %}• (vazio){% endif %}
+              {% if not pv.wg_pubkeys %}• {{ t('(empty)') }}{% endif %}
             </div>
           {% elif status.latest_handshake > 0 %}
-            handshake há {{ (now_ts - status.latest_handshake) | duration }}
+            {{ t('handshake {ago} ago', ago=(now_ts - status.latest_handshake) | duration) }}
           {% else %}
-            sem handshake
+            {{ t('no handshake') }}
           {% endif %}
         </dd>
 
-        <dt>30 dias</dt>
+        <dt>{{ t('30 days') }}</dt>
         <dd>↓ {{ bw.thirty_day_rx }} · ↑ {{ bw.thirty_day_tx }}</dd>
 
-        <dt>total</dt>
+        <dt>{{ t('total') }}</dt>
         <dd>↓ {{ bw.total_rx }} · ↑ {{ bw.total_tx }}</dd>
 
         {% if not peer.private_key_enc %}
-        <dt>chave</dt>
-        <dd class="text-muted">sem privada</dd>
+        <dt>{{ t('key') }}</dt>
+        <dd class="text-muted">{{ t('no private key') }}</dd>
         {% endif %}
       </dl>
 
@@ -104,53 +103,53 @@
            data-peer-name="{{ peer.name }}"
            role="button"
            tabindex="0"
-           title="Clica para ver detalhes">
-        <svg viewBox="0 0 80 24" width="80" height="24">
-          <path d="{{ pv.sparkline }}" fill="none"
-                stroke="var(--accent)" stroke-width="1.5"/>
-        </svg>
-      </div>
-      {% endif %}
+           title="{{ t('Click to see details') }}">
+         <svg viewBox="0 0 80 24" width="80" height="24">
+           <path d="{{ pv.sparkline }}" fill="none"
+                 stroke="var(--accent)" stroke-width="1.5"/>
+         </svg>
+       </div>
+       {% endif %}
 
-      {% if pv.quota_gb and pv.quota_gb > 0 %}
-      <div class="quota-bar" title="{{ pv.used_30d_gb|round(2) }} / {{ pv.quota_gb }} GB (30d)">
-        <div class="quota-fill quota-{{ pv.quota_class }}"
-             style="width: {{ pv.quota_pct }}%"></div>
-        <span class="quota-text">{{ pv.used_30d_gb|round(1) }} / {{ pv.quota_gb }} GB</span>
-      </div>
-      {% if peer.quota_suspended %}
-      <span class="badge badge-danger">SUSPENSO</span>
-      {% endif %}
-      {% endif %}
+       {% if pv.quota_gb and pv.quota_gb > 0 %}
+       <div class="quota-bar" title="{{ pv.used_30d_gb|round(2) }} / {{ pv.quota_gb }} GB (30d)">
+         <div class="quota-fill quota-{{ pv.quota_class }}"
+              style="width: {{ pv.quota_pct }}%"></div>
+         <span class="quota-text">{{ pv.used_30d_gb|round(1) }} / {{ pv.quota_gb }} GB</span>
+       </div>
+       {% if peer.quota_suspended %}
+       <span class="badge badge-danger">{{ t('SUSPENDED') }}</span>
+       {% endif %}
+       {% endif %}
 
       <div class="peer-actions">
         <div class="peer-actions-row">
           {% if peer.private_key_enc %}
-          <a href="{{ url_for('peer_conf', peer_id=peer.id) }}" class="btn secondary">.conf</a>
+          <a href="{{ url_for('peer_conf', peer_id=peer.id) }}" class="btn secondary">{{ t('.conf') }}</a>
           <a href="{{ url_for('peer_qr', peer_id=peer.id) }}"
              class="btn secondary qr-trigger"
              data-peer-name="{{ peer.name }}"
              data-qr-url="{{ url_for('peer_qr', peer_id=peer.id) }}"
              data-conf-url="{{ url_for('peer_conf', peer_id=peer.id) }}">
-            QR Code
+            {{ t('QR Code') }}
           </a>
           {% endif %}
           <form method="post" action="{{ url_for('peer_regenerate', peer_id=peer.id) }}"
-                data-confirm="{{ 'Gerar novo par de chaves' if not peer.private_key_enc else 'Rodar a private key' }} para {{ peer.name }}?&#10;&#10;A config atual do dispositivo DEIXA DE FUNCIONAR até reimportares o novo QR/.conf.&#10;Continuar?">
+                data-confirm="{{ t('Generate new keypair for {name}?', name=peer.name) if not peer.private_key_enc else t('Rotate the private key for {name}?', name=peer.name) }}&#10;&#10;{{ t('The device current config STOPS WORKING until it re-imports the new QR/.conf. Continue?') }}">
             <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-            <button type="submit" class="secondary">{{ 'Gerar chaves' if not peer.private_key_enc else 'Rodar chave' }}</button>
+            <button type="submit" class="secondary">{{ t('Generate keys') if not peer.private_key_enc else t('Rotate key') }}</button>
           </form>
-          <a href="{{ url_for('peer_edit', peer_id=peer.id) }}" class="btn secondary">Editar</a>
+          <a href="{{ url_for('peer_edit', peer_id=peer.id) }}" class="btn secondary">{{ t('Edit') }}</a>
         </div>
         <div class="peer-actions-row">
           <form method="post" action="{{ url_for('peer_toggle', peer_id=peer.id) }}">
             <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-            <button type="submit" class="secondary">{{ "Ativar" if peer.disabled else "Desativar" }}</button>
+            <button type="submit" class="secondary">{{ t('Activate') if peer.disabled else t('Deactivate') }}</button>
           </form>
           <form method="post" action="{{ url_for('peer_delete', peer_id=peer.id) }}"
-                data-confirm="Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.">
+                data-confirm="{{ t('Delete {name}? All active peers disconnect for ~1s.', name=peer.name) }}">
             <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-            <button type="submit" class="danger">Apagar</button>
+            <button type="submit" class="danger">{{ t('Delete') }}</button>
           </form>
         </div>
       </div>
@@ -159,8 +158,8 @@
   </div>
   {% else %}
   <div class="empty">
-    <p>Sem peers configurados.</p>
-    <p><a href="{{ url_for('peer_new') }}" class="btn">+ Criar primeiro peer</a></p>
+    <p>{{ t('No peers configured.') }}</p>
+    <p><a href="{{ url_for('peer_new') }}" class="btn">{{ t('+ Create first peer') }}</a></p>
   </div>
   {% endif %}
 </div>
@@ -169,7 +168,7 @@
 <div class="modal" id="qr-modal" aria-hidden="true" role="dialog" aria-labelledby="qr-modal-title">
   <div class="modal-backdrop" data-modal-close></div>
   <div class="modal-card">
-    <button class="modal-close" data-modal-close aria-label="Fechar">
+    <button class="modal-close" data-modal-close aria-label="{{ t('Close') }}">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="18" y1="6" x2="6" y2="18"/>
         <line x1="6" y1="6" x2="18" y2="18"/>
@@ -177,29 +176,29 @@
     </button>
 
     <h2 id="qr-modal-title" class="modal-title">
-      QR Code — <span class="peer-name"></span>
+      {{ t('QR Code —') }} <span class="peer-name"></span>
     </h2>
 
     <div class="qr-display">
       <img id="qr-image" alt="WireGuard config QR code">
     </div>
 
-    <p class="modal-hint">Aponta a câmara da app WireGuard para o código</p>
+    <p class="modal-hint">{{ t('Point the camera of the WireGuard app at the code') }}</p>
 
     <div class="modal-actions">
       <a id="qr-conf-link" class="btn secondary" download>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        .conf
+        {{ t('.conf') }}
       </a>
       <a id="qr-download" class="btn secondary" download>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        PNG
+        {{ t('PNG') }}
       </a>
-      <button data-modal-close class="btn">Fechar</button>
+      <button data-modal-close class="btn">{{ t('Close') }}</button>
     </div>
 
     <p class="modal-footer-hint">
-      <kbd>ESC</kbd> para fechar · click fora para fechar
+      <kbd>ESC</kbd> {{ t('to close · click outside to close') }}
     </p>
   </div>
 </div>
@@ -270,7 +269,7 @@
 <div class="modal" id="bw-modal" aria-hidden="true" role="dialog" aria-labelledby="bw-modal-title">
   <div class="modal-backdrop" data-modal-close></div>
   <div class="modal-card">
-    <button class="modal-close" data-modal-close aria-label="Fechar">
+    <button class="modal-close" data-modal-close aria-label="{{ t('Close') }}">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <line x1="18" y1="6" x2="6" y2="18"/>
         <line x1="6" y1="6" x2="18" y2="18"/>
@@ -278,29 +277,18 @@
     </button>
 
     <h2 id="bw-modal-title" class="modal-title">
-      Bandwidth — <span class="peer-name"></span>
+      {{ t('Bandwidth —') }} <span class="peer-name"></span>
     </h2>
 
     <canvas id="bw-chart" width="600" height="300"></canvas>
 
     <div class="modal-actions">
-      <button data-modal-close class="btn">Fechar</button>
+      <button data-modal-close class="btn">{{ t('Close') }}</button>
     </div>
   </div>
 </div>
 
 <script src="{{ url_for('static', filename='vendor/chartjs.min.js') }}"></script>
-<script>
-(function() {
-  // Confirm dialogs live in data-confirm attributes (properly HTML-escaped
-  // by Jinja) — never interpolated into inline JS strings.
-  document.querySelectorAll('form[data-confirm]').forEach(function(f) {
-    f.addEventListener('submit', function(e) {
-      if (!window.confirm(f.dataset.confirm)) e.preventDefault();
-    });
-  });
-})();
-</script>
 <script src="{{ url_for('static', filename='js/bandwidth-modal.js') }}"></script>
 <script src="{{ url_for('static', filename='js/global-chart.js') }}"></script>
 {% endblock %}

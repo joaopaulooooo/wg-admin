@@ -1,31 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Novo peer — wg-admin{% endblock %}
+{% block title %}{{ t('New peer — wg-admin') }}{% endblock %}
 {% block content %}
 <div class="container">
-  <h1><span class="accent-bar"></span>Novo peer</h1>
-  <p class="subtitle">// vai gerar par de chaves automaticamente</p>
+  <h1><span class="accent-bar"></span>{{ t('New peer') }}</h1>
+  <p class="subtitle">{{ t('// a keypair is generated automatically') }}</p>
 
   <div class="warn">
-    ⚠️ Criar um peer vai reiniciar o wg-quick. Se estás neste momento a aceder ao painel via VPN, a tua conexão vai cair por ~1 segundo e o formulário pode parecer não responder. Espera uns segundos e volta a carregar a página.
+    ⚠️ {{ t('Creating a peer restarts wg-quick. If you are accessing the panel over the VPN right now, your connection drops for ~1 second and the form may look unresponsive. Wait a few seconds and reload the page.') }}
   </div>
 
   <form method="post" action="{{ url_for('peer_new') }}">
-    <label for="name">NOME</label>
-    <input type="text" id="name" name="name" required placeholder="ex: João iPhone" autocomplete="off">
+    <label for="name">{{ t('NAME') }}</label>
+    <input type="text" id="name" name="name" required placeholder="{{ t('e.g. John iPhone') }}" autocomplete="off">
 
-    <label for="notes">NOTAS (opcional)</label>
-    <textarea id="notes" name="notes" placeholder="ex: acesso temporário até 2026-12"></textarea>
+    <label for="notes">{{ t('NOTES (optional)') }}</label>
+    <textarea id="notes" name="notes" placeholder="{{ t('e.g. temporary access until 2026-12') }}"></textarea>
 
-    <label for="quota_gb">COTA (GB, 0 = ilimitado)</label>
+    <label for="quota_gb">{{ t('QUOTA (GB, 0 = unlimited)') }}</label>
     <input type="number" id="quota_gb" name="quota_gb" step="0.1" min="0"
            value="0" placeholder="0">
-    <p class="hint">Soma dos últimos 30 dias. Ao exceder, suspende automaticamente;
-       reativa sozinho quando baixar abaixo do limite.</p>
+    <p class="hint">{{ t('Sum of the last 30 days. On overrun the peer is auto-suspended; it reactivates on its own when usage drops below the limit.') }}</p>
 
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-      <button type="submit" onclick="this.disabled=true; this.innerHTML='A criar…'; this.form.submit();">Criar peer</button>
-      <a href="{{ url_for('peers_list') }}" class="btn secondary">Cancelar</a>
+      <button type="submit" onclick="this.disabled=true; this.innerHTML='{{ t('Creating…') }}'; this.form.submit();">{{ t('Create peer') }}</button>
+      <a href="{{ url_for('peers_list') }}" class="btn secondary">{{ t('Cancel') }}</a>
     </div>
   </form>
 </div>

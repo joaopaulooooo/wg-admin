@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Server Status — wg-admin{% endblock %}
+{% block title %}{{ t('Server Status — wg-admin') }}{% endblock %}
 {% block content %}
 <div class="container">
   <h1><span class="accent-bar"></span>Server Status</h1>
@@ -9,7 +9,7 @@
     <div class="metric-card">
       <div class="metric-head">
         <span class="metric-label">CPU</span>
-        <span class="metric-sub" id="ss-cpu-sub">— cores</span>
+        <span class="metric-sub" id="ss-cpu-sub">{{ t('— cores') }}</span>
       </div>
       <div class="quota-bar">
         <div class="quota-fill" id="ss-cpu-fill" style="width: 0%"></div>
@@ -19,7 +19,7 @@
 
     <div class="metric-card">
       <div class="metric-head">
-        <span class="metric-label">MEMÓRIA</span>
+        <span class="metric-label">{{ t('MEMORY') }}</span>
         <span class="metric-sub" id="ss-mem-sub">— / —</span>
       </div>
       <div class="quota-bar">
@@ -31,24 +31,24 @@
     <div class="metric-card metric-card-disks">
       <div class="metric-head">
         <span class="metric-label">DISCO</span>
-        <span class="metric-sub" id="ss-disks-count">— mounts</span>
+        <span class="metric-sub" id="ss-disks-count">{{ t('— mounts') }}</span>
       </div>
       <div id="ss-disks" class="disks-list">
-        <div class="metric-muted">carregando…</div>
+        <div class="metric-muted">{{ t('loading…') }}</div>
       </div>
     </div>
   </div>
 
   <div class="info-grid">
     <div class="info-card">
-      <h2>Sistema</h2>
+      <h2>{{ t('System') }}</h2>
       <dl class="info-dl">
         <dt>HOSTNAME</dt><dd id="ss-hostname">—</dd>
         <dt>UPTIME</dt><dd id="ss-uptime">—</dd>
         <dt>LOAD AVG</dt><dd id="ss-load">—</dd>
         <dt>KERNEL</dt><dd id="ss-kernel">—</dd>
         <dt>ARCH</dt><dd id="ss-arch">—</dd>
-        <dt>IP PÚBLICO</dt><dd id="ss-public-ip">—</dd>
+        <dt>{{ t('PUBLIC IP') }}</dt><dd id="ss-public-ip">—</dd>
       </dl>
     </div>
 
@@ -122,10 +122,10 @@
     const container = document.getElementById('ss-disks');
     if (!container) return;
     if (!disks || disks.length === 0) {
-      container.innerHTML = '<div class="metric-muted">sem discos físicos</div>';
+      container.innerHTML = '<div class="metric-muted">{{ t('no physical disks') }}</div>';
       return;
     }
-    setText('ss-disks-count', disks.length + ' mount' + (disks.length > 1 ? 's' : ''));
+    setText('ss-disks-count', disks.length + ' ' + {{ t('mount')|tojson }} + (disks.length > 1 ? {{ t('mounts')|tojson }} : ''));
     container.innerHTML = disks.map(function(d) {
       return '' +
         '<div class="disk-row">' +
@@ -160,7 +160,7 @@
   function renderTime() {
     const d = new Date();
     const pad = function(n) { return n < 10 ? '0' + n : n; };
-    setText('ss-last-updated', 'atualizado ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()));
+    setText('ss-last-updated', {{ t('updated ')|tojson }} + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()));
   }
 
   async function refresh() {
@@ -187,7 +187,7 @@
       renderWg(data.wg);
       renderTime();
     } catch (e) {
-      setText('ss-last-updated', 'erro: ' + e.message);
+      setText('ss-last-updated', {{ t('error: ')|tojson }} + e.message);
     }
   }
 

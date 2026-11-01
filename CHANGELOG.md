@@ -4,6 +4,16 @@ All notable changes to wg-admin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] — 2026-11-01
+
+### Added
+- **English UI — now the default language — with Portuguese available** (`src/wg_admin/i18n.py`, dependency-free): every template, flash message and inline-JS string goes through `t()`, with English as the catalog key (missing keys fall back to English). Placeholders use `{name}` syntax; JS strings are injected with `|tojson`.
+  - **Install-time choice**: `install.sh` asks "Panel language / Idioma do painel" (English default, Português option) on fresh installs.
+  - **Existing installs are migrated to `language = pt`** — a config without the new key is pinned to Portuguese on the first re-run of `install.sh`, so nobody's panel changes language under them. New installs default to English.
+  - **Settings page → "Language · Idioma" card**: pick the language, save; applied via the existing config-save + self-restart flow. The card title and options are intentionally bilingual so you can always find it.
+  - `<html lang>` now reflects the active language; the `data-confirm` dialog handler moved from `peers.html` to `base.html` (used by settings forms too, and the settings confirms were migrated off inline `onsubmit` JS).
+  - A catalog-completeness test greps every `t('...')` in templates and `app.py` and fails if a key lacks a Portuguese translation; another test asserts placeholder parity between keys and translations.
+
 ## [0.3.1] — 2026-11-01
 
 ### Fixed

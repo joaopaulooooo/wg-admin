@@ -150,19 +150,22 @@ def test_peer_defaults_saved_to_config_ini(client, workdir, authed):
 
 
 def test_peer_defaults_rejects_bad_allowed_ips(client, workdir, authed):
+    before = workdir["config_path"].read_text()
     client.post("/settings/peer-defaults", data={
         "endpoint_host": "vpn.example.pt", "endpoint_port": "51820",
         "allowed_ips": "banana", "dns": "", "csrf_token": authed,
     })
-    assert not workdir["config_path"].exists()
+    # config.ini unchanged (bad input never reaches the disk)
+    assert workdir["config_path"].read_text() == before
 
 
 def test_peer_defaults_rejects_bad_dns(client, workdir, authed):
+    before = workdir["config_path"].read_text()
     client.post("/settings/peer-defaults", data={
         "endpoint_host": "vpn.example.pt", "endpoint_port": "51820",
         "allowed_ips": "0.0.0.0/0", "dns": "not-an-ip", "csrf_token": authed,
     })
-    assert not workdir["config_path"].exists()
+    assert workdir["config_path"].read_text() == before
 
 
 def test_rotate_key_updates_conf_and_flashes_new_pub(client, wgconf, authed, monkeypatch):

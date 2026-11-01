@@ -19,6 +19,9 @@ def workdir(tmp_path, monkeypatch):
 
     (secrets_dir / "master.key").write_bytes(os.urandom(32))
     (secrets_dir / "session.key").write_bytes(os.urandom(32))
+    # The suite was written against the Portuguese UI — pin it explicitly
+    # (the app default for fresh installs is English since v0.3.2).
+    config_path.write_text("[server]\nlanguage = pt\n")
 
     from wg_admin import crypto
     phc = crypto.hash_password("test-password")

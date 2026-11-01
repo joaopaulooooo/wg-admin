@@ -411,9 +411,22 @@ if [[ ! -f "$INSTALL_DIR/config.ini" ]]; then
       ;;
   esac
 
+  echo ""
+  echo ">>> Panel language / Idioma do painel:"
+  echo "     1) English (default)"
+  echo "     2) Português"
+  read -r -p "Option [1]: " LANG_OPT
+  LANG_OPT=${LANG_OPT:-1}
+  case "$LANG_OPT" in
+    1) PANEL_LANG="en" ;;
+    2) PANEL_LANG="pt" ;;
+    *) err "Invalid option" ;;
+  esac
+
   cp "$INSTALL_DIR/config.ini.example" "$INSTALL_DIR/config.ini"
   sed -i "s/^endpoint_host = .*/endpoint_host = $ENDPOINT/" "$INSTALL_DIR/config.ini"
   sed -i "s/^listen_port = .*/listen_port = $LISTEN_PORT/" "$INSTALL_DIR/config.ini"
+  sed -i "s/^language = .*/language = $PANEL_LANG/" "$INSTALL_DIR/config.ini"
 
   # Propagar subnet e server_ip do wg0.conf para config.ini
   if [[ -f /etc/wireguard/wg0.conf ]]; then
@@ -488,6 +501,14 @@ with open('$INSTALL_DIR/config.ini', 'w') as f:
       info ""
     fi
   fi
+fi
+
+# --- Language migration: existing installs keep Portuguese behavior ---
+# Configs written before v0.3.2 have no `language` key; the new default is
+# English, so pin them to `pt` explicitly (the UI they already speak).
+if [[ -f "$INSTALL_DIR/config.ini" ]] && ! grep -qE '^language[[:space:]]*=' "$INSTALL_DIR/config.ini"; then
+  info "config.ini sem 'language' — a fixar 'pt' (mantém o Português atual)"
+  sed -i '/^\[server\]/a language = pt' "$INSTALL_DIR/config.ini"
 fi
 
 # --- Sempre popular server_public_key (idempotente — tenta várias fontes) ---

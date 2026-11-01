@@ -3,7 +3,7 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-243-brightgreen)
+![Tests](https://img.shields.io/badge/tests-259-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
@@ -29,6 +29,9 @@ Minimal WireGuard peer management panel for Linux servers. Python + Flask + syst
 
 ### Self-update
 - **In-panel updater**: the sidebar polls GitHub for newer tags (server-side, cached 1 h) and shows an update button next to the version when one exists. Confirm → the panel downloads the tag and re-runs the idempotent `install.sh` in a transient systemd unit (`wg-admin-selfupdate`) that survives the panel's own restart. WireGuard peers are not affected, the admin session persists, and the page reloads itself on the new version.
+
+### Languages
+- **English UI (default) with Portuguese**: choose the panel language during install (`Panel language / Idioma do painel`) or switch it anytime in Settings → "Language · Idioma". Installs created before v0.3.2 stay in Portuguese automatically.
 
 ### Security
 - **Single admin password** (Argon2id, m=16MB/t=3/p=1)
@@ -123,6 +126,10 @@ a server-side epoch that didn't exist before). The bandwidth timer's systemd uni
 re-copied with the fix that lets quota enforcement write `/etc/wireguard`. Log in again and
 you're up to date.
 
+**Upgrading to v0.3.2 (languages)**: installs from before v0.3.2 are automatically pinned to
+`language = pt` (the UI they already speak); new installs default to English. Change it
+anytime in Settings → "Language · Idioma".
+
 ## Uninstall
 
 ```bash
@@ -143,7 +150,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-243 tests, 88% coverage.
+259 tests, 88% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -174,7 +181,7 @@ static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 243 tests, integration smoke test
+tests/            # 259 tests, integration smoke test
 docs/             # specs, plans, smoke test checklist
 .github/          # CI workflow (actions pinned by SHA), issue/PR templates
 ```
