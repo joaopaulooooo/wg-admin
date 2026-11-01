@@ -4,7 +4,24 @@ All notable changes to wg-admin are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-11-01
+
+### Security
+- **State transactions are now serialized end-to-end** — `state.update_state(path, key, mutator)` holds the flock across load → mutate → save, so concurrent gunicorn workers and the bandwidth timer can no longer clobber each other (previously a stale read-modify-write could resurrect a disabled/deleted peer, duplicate an allocated IP, or drop a quota suspension). All mutating routes and the quota check use it.
+- **Backup rotation no longer makes the state file disappear** — `save_state` used to move the live file to `.bak` before writing the new one, so a concurrent lockless reader saw "no file" and got an **empty state**. The new order writes the fresh envelope over the live file via `os.replace` and only then refreshes `.bak`/`.bak1` from the previous bytes. Temp files are per-writer unique (`pid + monotonic_ns`), still 0600.
+- **Failed applies are now retried, not silently dropped** — when `apply_state_to_wg` fails (create/delete/toggle/regenerate/quota/settings), the state is flagged `pending_apply`; the bandwidth timer retries it every 5 min until it succeeds, and `/peers` shows a persistent red banner meanwhile. Fixes the quota-suspension case where the state said SUSPENSO but WireGuard kept authorizing the peer. The timer's systemd unit now has `ReadWritePaths=/wg-admin /etc/wireguard` (quota enforcement needs to write the conf — `strict` without it made every apply fail on systemd ≥ 235).
+- **Changing the password now revokes all sessions** — sessions are pinned to a `session_epoch` counter in `auth.ini` (bumped on every password change). Old cookies — including a stolen copy that survives logout — die with the password. Note: upgrading to 0.3.0 logs every existing session out once.
+- **Input validation closes config-injection paths** — peer names must be single-line ≤100 chars; private keys pasted in "Editar" must be well-formed base64 **and** derive the peer's exact public key; `endpoint_host` must be a real hostname/IP (no whitespace/newlines). WireGuard conf generation additionally collapses whitespace in `# name:` comment headers, so a crafted name can never break out into an active directive (`PostUp`, …). `quota_gb` rejects `nan`/`inf`.
+- **XSS sink removed from peer cards** — the confirm dialogs interpolated the peer name inside a JS string in an `onsubmit` attribute (HTML-entity decoding lets the string be broken out). Dialogs now live in `data-confirm` attributes — properly HTML-escaped — read by a small delegated listener.
+- **`.conf`/QR responses (private keys!) are `Cache-Control: no-store`** — browsers/proxies can no longer cache them; download filename uses `secure_filename`.
+- **Security headers on every response** — CSP (`default-src 'self'`, `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Strict-Transport-Security` (1 year). Inline handlers remain (hence `unsafe-inline` in script-src for now); a strict-CSP refactor is future work.
+- **`install.sh` no longer accepts an empty/short admin password** (min 8 chars, confirmed in a retry loop) and passes it to the hasher via **stdin** instead of argv (argv is visible in `/proc`). Runs under `umask 077`, so `master.key`/`session.key`/`auth.ini` are 0600 from the instant they're created — no world-readable window.
+- **`uninstall.sh --keep-state` no longer exports secrets world-readable** — the tarball (master/session keys!) is created under `umask 077` → 0600, services are stopped *before* the backup so state is quiesced, and a failed/empty backup aborts the uninstall instead of `rm -rf`-ing the only copy.
+- **wg conf rewrites preserve file mode** — `update_interface_in_conf` used to recreate a 0600 conf as 0644 (umask-dependent); it now writes via a 0600 temp and restores the original mode on replace. `apply_state_to_wg` does the same.
+- **CSRF token comparison is constant-time** (`hmac.compare_digest`); `/vpn/toggle` only honors same-origin `Referer` (no more open-redirect via a foreign referrer header); request bodies are capped at 256 KB (`MAX_CONTENT_LENGTH`).
+- **gunicorn floor raised to `>=23.0`** — 21.x/22.x are affected by CVE-2024-6827 and CVE-2024-1135 (HTTP request smuggling, fixed in 22.0).
+- **CI actions pinned by commit SHA** (checkout, setup-python, upload-artifact) — tag-floating `uses:` is a supply-chain risk.
+- Added `SECURITY.md` with a private vulnerability reporting policy.
 
 ### Removed
 - **WhatsApp share button and modal** — dropped from the peers page along with its JS (`static/js/whatsapp-modal.js`). `.conf` download and QR remain.

@@ -211,21 +211,46 @@ def main():
 
 
 def _run_quota_check(bw_path: Path) -> None:
-    """After sampling, check quotas and apply state if any peer changed."""
+    """After sampling, check quotas and apply state if any peer changed.
+
+    Runs as a serialized transaction: quota decisions are computed under
+    the state lock, so a concurrent panel edit cannot be clobbered. If the
+    apply to WireGuard fails, the state is flagged pending_apply and the
+    next timer tick retries it (even when no new quota change happens).
+    """
     try:
         from . import config as config_mod, quota, state as state_mod, wg
         master_key_path = SECRETS_DIR / "master.key"
         if not master_key_path.exists():
             return  # not fully installed
         master_key = master_key_path.read_bytes()
-        state_data = state_mod.load_state(STATE_PATH, master_key)
         cfg = config_mod.load_config(CONFIG_PATH)
         global_q = cfg["quota"].getfloat("global_quota_gb", 0)
         bw = load_bandwidth(bw_path)
-        changes = quota.check_quotas(state_data, bw, global_q)
-        if changes:
-            state_mod.save_state(STATE_PATH, state_data, master_key)
+
+        def mut(st):
+            changes = quota.check_quotas(st, bw, global_q)
+            if not changes and not st.get("pending_apply"):
+                raise state_mod.NoChanges
+            return changes
+
+        state_data, changes = state_mod.update_state(STATE_PATH, master_key, mut)
+        if changes is None:
+            return  # nothing changed, nothing pending — no write
+
+        try:
             wg.apply_state_to_wg(state_data, cfg, mode="syncconf")
+        except Exception:
+            def flag(st):
+                st["pending_apply"] = True
+            state_mod.update_state(STATE_PATH, master_key, flag)
+            print("WARN: quota change saved but apply to wg failed; "
+                  "flagged pending_apply, will retry next tick", file=sys.stderr)
+        else:
+            if state_data.get("pending_apply"):
+                def unflag(st):
+                    st["pending_apply"] = False
+                state_mod.update_state(STATE_PATH, master_key, unflag)
     except Exception as e:
         print(f"WARN: quota check failed: {e}", file=sys.stderr)
 

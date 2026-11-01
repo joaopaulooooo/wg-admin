@@ -294,8 +294,7 @@ def test_apply_state_to_wg_syncconf_success(tmp_path, monkeypatch):
     monkeypatch.setattr(wg, "wg_syncconf", fake_syncconf)
     monkeypatch.setattr(wg, "wg_quick_restart", fake_restart)
     monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
-    monkeypatch.setattr("pathlib.Path.write_text", lambda self, data, **kw: None)
-    monkeypatch.setattr("os.replace", lambda src, dst: None)
+    monkeypatch.setattr(wg, "_write_conf_atomic", lambda path, text, preserve_mode=False: None)
 
     cfg = type("C", (), {"__getitem__": lambda self, k: {"wg": {"interface": "wg0", "server_ip": "10.0.0.1", "subnet": "10.0.0.0/24"}}[k]})()
     s = {"peers": [{"public_key": "PUB", "ip": "10.0.0.2", "name": "x", "disabled": False}]}
@@ -312,8 +311,7 @@ def test_apply_state_to_wg_syncconf_failure_falls_back_to_restart(monkeypatch, t
     monkeypatch.setattr(wg, "wg_syncconf", lambda iface: (calls.__setitem__("syncconf", True), False)[1])
     monkeypatch.setattr(wg, "wg_quick_restart", lambda iface: calls.__setitem__("restart", True))
     monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
-    monkeypatch.setattr("pathlib.Path.write_text", lambda self, data, **kw: None)
-    monkeypatch.setattr("os.replace", lambda src, dst: None)
+    monkeypatch.setattr(wg, "_write_conf_atomic", lambda path, text, preserve_mode=False: None)
 
     cfg = type("C", (), {"__getitem__": lambda self, k: {"wg": {"interface": "wg0", "server_ip": "10.0.0.1", "subnet": "10.0.0.0/24"}}[k]})()
     s = {"peers": []}
@@ -330,8 +328,7 @@ def test_apply_state_to_wg_restart_mode_skips_syncconf(monkeypatch):
     monkeypatch.setattr(wg, "wg_syncconf", lambda iface: calls.__setitem__("syncconf", True))
     monkeypatch.setattr(wg, "wg_quick_restart", lambda iface: calls.__setitem__("restart", True))
     monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
-    monkeypatch.setattr("pathlib.Path.write_text", lambda self, data, **kw: None)
-    monkeypatch.setattr("os.replace", lambda src, dst: None)
+    monkeypatch.setattr(wg, "_write_conf_atomic", lambda path, text, preserve_mode=False: None)
 
     cfg = type("C", (), {"__getitem__": lambda self, k: {"wg": {"interface": "wg0", "server_ip": "10.0.0.1", "subnet": "10.0.0.0/24"}}[k]})()
     s = {"peers": []}

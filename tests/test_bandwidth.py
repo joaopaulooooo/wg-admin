@@ -338,3 +338,64 @@ def test_sparkline_path_single_value_does_not_crash():
     result = sparkline_path([5], width=80, height=24)
     assert isinstance(result, str)
     assert result == ""  # spec: return empty for single value
+
+
+def test_quota_apply_failure_flags_pending_and_retries(tmp_path, monkeypatch):
+    """A failed apply is flagged pending_apply and retried on the next tick,
+    even when no new quota change happens (state/UI vs runtime divergence)."""
+    import json as _json
+    import os as _os
+    import sys as _sys
+    from datetime import datetime, timezone, timedelta
+    from wg_admin import bandwidth, state as state_mod
+
+    state_path = tmp_path / "state.json.enc"
+    config_path = tmp_path / "config.ini"
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    master_key = _os.urandom(32)
+    (secrets_dir / "master.key").write_bytes(master_key)
+
+    monkeypatch.setattr(bandwidth, "STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(bandwidth, "CONFIG_PATH", config_path, raising=False)
+    monkeypatch.setattr(bandwidth, "SECRETS_DIR", secrets_dir, raising=False)
+
+    daily = {}
+    for i in range(10):
+        d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        daily[d] = {"rx": 1024**3, "tx": 0}
+    s = state_mod.empty_state()
+    s["peers"] = [{"id": "1", "name": "x", "public_key": "PUB",
+                   "private_key_enc": "ENC", "ip": "10.0.0.2", "disabled": False,
+                   "quota_gb": 5.0, "quota_suspended": False,
+                   "quota_state_updated_at": None, "created_at": "..."}]
+    state_mod.save_state(state_path, s, master_key)
+
+    bw_path = tmp_path / "bandwidth.json"
+    bw_path.write_text(_json.dumps({"peers": {"PUB": {
+        "first_seen": "2026-06-01T00:00:00Z",
+        "total_rx": 10 * 1024**3, "total_tx": 0,
+        "daily": daily,
+        "last_sample": {"ts": "2026-06-27T00:00:00Z", "rx": 0, "tx": 0},
+    }}}))
+    config_path.write_text("[wg]\ninterface = wg0\nsubnet = 10.0.0.0/24\nserver_ip = 10.0.0.1\n[quota]\nglobal_quota_gb = 0\n")
+
+    monkeypatch.setattr("wg_admin.wg.wg_show_dump", lambda iface: [])
+    attempts = []
+    def flaky_apply(st, cfg, mode="syncconf"):
+        attempts.append(mode)
+        if len(attempts) == 1:
+            raise RuntimeError("simulated apply failure")
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", flaky_apply)
+
+    monkeypatch.setattr(_sys, "argv", ["bandwidth.py", "track", str(bw_path)])
+
+    bandwidth.main()  # tick 1: suspend + apply fails -> pending_apply
+    st = state_mod.load_state(state_path, master_key)
+    assert st["peers"][0]["quota_suspended"] is True
+    assert st["pending_apply"] is True
+
+    bandwidth.main()  # tick 2: no new change, but pending -> retry succeeds
+    assert len(attempts) == 2
+    st = state_mod.load_state(state_path, master_key)
+    assert st["pending_apply"] is False

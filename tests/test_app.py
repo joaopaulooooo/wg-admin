@@ -736,3 +736,152 @@ def test_created_peer_shows_rotate_key_button(client, workdir):
     assert r.status_code == 200
     assert b"Rodar chave" in r.data
     assert b"Gerar chaves" not in r.data
+
+
+# ─── v0.3.0 security regressions ────────────────────────────────────────────
+
+def test_change_password_revokes_all_sessions(client, workdir):
+    """Bumping the epoch on password change kills every session, including
+    a second browser still holding a valid-looking cookie."""
+    client.post("/login", data={"password": "test-password"})
+
+    other = client.application.test_client()
+    other.post("/login", data={"password": "test-password"})
+    assert other.get("/settings").status_code == 200
+
+    with client.session_transaction() as sess:
+        csrf = sess["csrf_token"]
+    r = client.post("/change-password", data={
+        "current": "test-password",
+        "new": "brand-new-pwd-9",
+        "confirm": "brand-new-pwd-9",
+        "csrf_token": csrf,
+    })
+    assert r.status_code in (301, 302)
+    assert "/login" in r.headers["Location"]
+
+    # The other session's cookie is now worthless.
+    r = other.get("/settings")
+    assert r.status_code in (301, 302)
+    assert "/login" in r.headers["Location"]
+
+
+def test_session_epoch_bump_forces_relogin(client, workdir):
+    client.post("/login", data={"password": "test-password"})
+    assert client.get("/settings").status_code == 200
+
+    from wg_admin.app import _read_auth_ini, _write_auth_ini
+    phc, epoch = _read_auth_ini()
+    _write_auth_ini(phc, epoch + 1)  # simulate out-of-band password change
+
+    r = client.get("/settings")
+    assert r.status_code in (301, 302)
+    assert "/login" in r.headers["Location"]
+
+
+def test_conf_and_qr_responses_are_no_store(client, workdir):
+    from wg_admin import state as state_mod
+    s = state_mod.empty_state()
+    s["peers"] = [{
+        "id": "k1", "name": "phone", "notes": "", "public_key": "PUB",
+        "private_key_enc": state_mod.encrypt_private_key(
+            "PRIVATE_KEY_HERE=", client.application.config["MASTER_KEY"]),
+        "ip": "10.0.0.2", "disabled": False,
+        "created_at": "2026-06-17T00:00:00Z",
+    }]
+    state_mod.save_state(workdir["state_path"], s, client.application.config["MASTER_KEY"])
+    client.post("/login", data={"password": "test-password"})
+
+    conf = client.get("/peers/k1/conf")
+    assert conf.status_code == 200
+    assert conf.headers.get("Cache-Control") == "no-store"
+    assert "attachment" in conf.headers.get("Content-Disposition", "")
+
+    qr = client.get("/peers/k1/qr")
+    assert qr.status_code == 200
+    assert qr.headers.get("Cache-Control") == "no-store"
+
+
+def test_security_headers_present(client):
+    r = client.get("/login")
+    assert r.headers.get("X-Frame-Options") == "DENY"
+    assert r.headers.get("X-Content-Type-Options") == "nosniff"
+    assert r.headers.get("Referrer-Policy") == "no-referrer"
+    assert "frame-ancestors 'none'" in r.headers.get("Content-Security-Policy", "")
+
+
+def test_peer_new_rejects_newline_in_name(client, workdir, monkeypatch):
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("PRIVATE", "PUBLIC"))
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", lambda s, cfg, mode="syncconf": None)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+
+    r = client.post("/peers/new", data={"name": "x\nPostUp = evil", "csrf_token": token})
+    assert r.status_code == 200  # form re-rendered with the error
+    assert "inválido".encode() in r.data
+
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"], client.application.config["MASTER_KEY"])
+    assert st["peers"] == []
+
+
+def test_peer_new_rejects_nan_quota(client, workdir, monkeypatch):
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.wg_genkey", lambda: ("PRIVATE", "PUBLIC"))
+    monkeypatch.setattr("wg_admin.wg.apply_state_to_wg", lambda s, cfg, mode="syncconf": None)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+
+    r = client.post("/peers/new", data={"name": "ok", "quota_gb": "nan", "csrf_token": token})
+    assert r.status_code == 200
+
+    from wg_admin import state as state_mod
+    st = state_mod.load_state(workdir["state_path"], client.application.config["MASTER_KEY"])
+    assert st["peers"] == []
+
+
+def test_peer_edit_rejects_mismatched_private_key(client, workdir, monkeypatch):
+    from wg_admin import state as state_mod
+    s = state_mod.empty_state()
+    s["peers"] = [{
+        "id": "p1", "name": "x", "notes": "", "public_key": "PUB",
+        "private_key_enc": "", "ip": "10.0.0.2", "disabled": False,
+        "created_at": "2026-06-17T00:00:00Z",
+    }]
+    state_mod.save_state(workdir["state_path"], s, client.application.config["MASTER_KEY"])
+
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.wg_pubkey", lambda priv: "DIFFERENT-PUB")
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+
+    r = client.post("/peers/p1/edit", data={
+        "name": "x", "private_key": "A" * 43 + "=", "csrf_token": token})
+    assert r.status_code == 200
+    assert "Chave privada inválida".encode() in r.data
+
+    st = state_mod.load_state(workdir["state_path"], client.application.config["MASTER_KEY"])
+    assert st["peers"][0]["private_key_enc"] == ""
+
+
+def test_vpn_toggle_ignores_foreign_referrer(client, workdir, monkeypatch):
+    client.post("/login", data={"password": "test-password"})
+    monkeypatch.setattr("wg_admin.wg.wg_interface_active", lambda iface: False)
+    import subprocess as _sp
+    monkeypatch.setattr("wg_admin.app.subprocess", _sp)
+    monkeypatch.setattr("wg_admin.app.subprocess.run", lambda cmd, **kw: None)
+    with client.session_transaction() as sess:
+        token = sess["csrf_token"]
+
+    # Foreign referrer -> same-app fallback, never an open redirect.
+    r = client.post("/vpn/toggle", data={"csrf_token": token},
+                    headers={"Referer": "https://evil.example/peers"})
+    assert r.status_code in (301, 302)
+    assert "/peers" in r.headers["Location"]
+
+    # Same-origin referrer still honored.
+    r2 = client.post("/vpn/toggle", data={"csrf_token": token},
+                     headers={"Referer": "http://localhost/server-status"})
+    assert r2.status_code in (301, 302)
+    assert "server-status" in r2.headers["Location"]

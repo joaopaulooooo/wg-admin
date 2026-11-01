@@ -12,6 +12,6 @@ ExecStart=/wg-admin/venv/bin/python -m wg_admin.bandwidth track /wg-admin/bandwi
 # Hardening
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/wg-admin
+ReadWritePaths=/wg-admin /etc/wireguard
 NoNewPrivileges=yes
 PrivateTmp=yes

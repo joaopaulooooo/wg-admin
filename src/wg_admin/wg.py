@@ -103,7 +103,10 @@ def generate_wg_conf(interface: dict, peers: list) -> str:
         lines.append("")
         prefix = "# " if peer.get("disabled") else ""
         if peer.get("name"):
-            lines.append(f"{prefix}# name: {peer['name']}")
+            # Collapse all whitespace (incl. newlines) so a crafted name can
+            # never break out of the comment line into an active directive.
+            name = " ".join(str(peer["name"]).split())
+            lines.append(f"{prefix}# name: {name}")
         lines.append(f"{prefix}[Peer]")
         lines.append(f"{prefix}PublicKey = {peer['PublicKey']}")
         lines.append(f"{prefix}AllowedIPs = {peer['AllowedIPs']}")
@@ -112,6 +115,26 @@ def generate_wg_conf(interface: dict, peers: list) -> str:
 
 
 INTERFACE_KEY_ORDER = ("Address", "ListenPort", "MTU", "PrivateKey")
+
+
+def _write_conf_atomic(path: Path, text: str, preserve_mode: bool = False) -> None:
+    """Atomic conf write via a 0600, per-writer-unique temp file.
+
+    WireGuard confs hold private keys and are conventionally 0600; a plain
+    write_text would recreate them 0644 depending on umask. With
+    preserve_mode=True the destination's existing mode is kept.
+    """
+    tmp = Path(f"{path}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    if preserve_mode:
+        try:
+            mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            mode = 0o600
+        os.chmod(tmp, mode)
+    os.replace(tmp, path)
 
 
 def update_interface_in_conf(conf_path: Path, updates: dict) -> dict:
@@ -167,9 +190,9 @@ def update_interface_in_conf(conf_path: Path, updates: dict) -> dict:
     else:
         new_content = "\n".join(out) + "\n"
 
-    tmp = Path(conf_path).with_suffix(".conf.tmp")
-    tmp.write_text(new_content)
-    os.replace(tmp, conf_path)
+    # Write via the shared atomic helper (0600 temp, mode preserved — a
+    # plain write would recreate a 0600 conf as 0644).
+    _write_conf_atomic(conf_path, new_content, preserve_mode=True)
     return parse_wg_conf(Path(conf_path).read_text())["interface"]
 
 
@@ -292,6 +315,15 @@ def wg_genkey() -> tuple[str, str]:
     return priv, pub_proc.stdout.strip()
 
 
+def wg_pubkey(private_key: str) -> str:
+    """Derive the public key for a WireGuard private key via `wg pubkey`."""
+    proc = subprocess.run(
+        ["wg", "pubkey"], input=private_key,
+        capture_output=True, text=True, check=True,
+    )
+    return proc.stdout.strip()
+
+
 def wg_show_dump(interface: str = "wg0") -> List[PeerStatus]:
     """Run `wg show <interface> dump` and return parsed statuses."""
     proc = subprocess.run(
@@ -393,9 +425,7 @@ def apply_state_to_wg(s: dict, cfg, mode: str = "syncconf") -> None:
         for p in s["peers"]
     ]
     conf_text = generate_wg_conf(wg_interface, wg_peers)
-    tmp = interface_path.with_suffix(".conf.tmp")
-    tmp.write_text(conf_text)
-    os.replace(tmp, interface_path)
+    _write_conf_atomic(interface_path, conf_text)
 
     if mode == "syncconf":
         if wg_syncconf(interface):

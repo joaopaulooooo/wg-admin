@@ -1,7 +1,11 @@
 """Flask app: routes, auth, CSRF, rate limit."""
 from __future__ import annotations
 
+import hmac
 import ipaddress
+import math
+import os
+import re
 import secrets as pysecrets
 import subprocess
 from datetime import datetime, timezone, timedelta
@@ -12,6 +16,7 @@ from flask import (
     Flask, abort, flash, jsonify, redirect, render_template, request,
     session, url_for,
 )
+from werkzeug.utils import secure_filename
 
 from . import authlog, bandwidth, confgen, config, crypto, ratelimit, serverstats, state, wg
 
@@ -23,6 +28,77 @@ RATELIMIT_PATH = Path("/wg-admin/secrets/auth_ratelimit.json")
 AUTHLOG_PATH = Path("/wg-admin/secrets/auth.log")
 BANDWIDTH_PATH = Path("/wg-admin/bandwidth.json")
 WG_CONF_DIR = Path("/etc/wireguard")
+
+_NAME_MAX = 100
+_WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}=$")
+
+
+def _read_auth_ini() -> tuple[str, int]:
+    """Return (password_hash, session_epoch) from secrets/auth.ini.
+
+    Missing file or missing fields degrade to ("", 0) so verification
+    fails closed instead of raising a 500.
+    """
+    try:
+        text = (SECRETS_DIR / "auth.ini").read_text()
+    except OSError:
+        return "", 0
+    phc = ""
+    epoch = 0
+    for line in text.splitlines():
+        if line.startswith("password_hash ="):
+            phc = line.split("=", 1)[1].strip()
+        elif line.startswith("session_epoch ="):
+            try:
+                epoch = int(line.split("=", 1)[1].strip())
+            except ValueError:
+                epoch = 0
+    return phc, epoch
+
+
+def _write_auth_ini(phc_hash: str, epoch: int) -> None:
+    """Atomically rewrite secrets/auth.ini as 0600."""
+    path = SECRETS_DIR / "auth.ini"
+    tmp = Path(f"{path}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(f"password_hash = {phc_hash}\n")
+        f.write(f"session_epoch = {epoch}\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    os.chmod(path, 0o600)
+
+
+def _valid_peer_name(name: str) -> bool:
+    """Single line, non-empty, bounded length (no conf/JS breakout)."""
+    return (
+        bool(name)
+        and len(name) <= _NAME_MAX
+        and "\r" not in name
+        and "\n" not in name
+    )
+
+
+def _valid_wg_private_key(priv: str, expected_pub: str) -> bool:
+    """Well-formed base64 key whose derived pubkey matches the peer."""
+    if not _WG_KEY_RE.match(priv or ""):
+        return False
+    try:
+        return wg.wg_pubkey(priv) == expected_pub
+    except Exception:
+        return False
+
+
+def _valid_endpoint_host(host: str) -> bool:
+    """A single-line IP or hostname — no whitespace or control chars."""
+    if not host or len(host) > 253 or any(c in host for c in " \t\r\n"):
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return re.match(r"^[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?$", host) is not None
 
 
 def format_duration(seconds):
@@ -86,9 +162,25 @@ def create_app() -> Flask:
         SESSION_COOKIE_SAMESITE="Strict",
         PERMANENT_SESSION_LIFETIME=cfg["server"].getint("session_lifetime_seconds", 3600),
         SESSION_PERMANENT=True,
+        MAX_CONTENT_LENGTH=256 * 1024,
         MASTER_KEY=master_key,
         CONFIG=cfg,
     )
+
+    @app.after_request
+    def set_security_headers(resp):
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; base-uri 'self'; form-action 'self'; "
+            "frame-ancestors 'none'",
+        )
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+        return resp
 
     @app.before_request
     def csrf_protect():
@@ -104,7 +196,7 @@ def create_app() -> Flask:
             # login_required handle the redirect rather than 403-ing on CSRF.
             if token is None:
                 return
-            if token != request.form.get("csrf_token"):
+            if not hmac.compare_digest(token, request.form.get("csrf_token", "")):
                 abort(403)
 
     from . import quota as quota_mod
@@ -134,6 +226,12 @@ def create_app() -> Flask:
         def wrapper(*args, **kwargs):
             if not session.get("admin"):
                 return redirect(url_for("login"))
+            # Sessions are pinned to a server-side epoch bumped on password
+            # change: an old (possibly stolen) cookie dies with the password.
+            _, epoch = _read_auth_ini()
+            if session.get("epoch") != epoch:
+                session.clear()
+                return redirect(url_for("login"))
             return f(*args, **kwargs)
         return wrapper
 
@@ -144,6 +242,31 @@ def create_app() -> Flask:
     def index():
         return redirect(url_for("peers_list"))
 
+    def _apply_or_flag(s: dict, mode: str) -> bool:
+        """Apply state to WireGuard; record pending_apply in state on failure
+        so the bandwidth timer retries and the UI shows a warning banner."""
+        try:
+            wg.apply_state_to_wg(s, cfg, mode=mode)
+        except Exception:
+            app.logger.exception("Failed to apply state to wg")
+            try:
+                state.update_state(
+                    STATE_PATH, app.config["MASTER_KEY"],
+                    lambda st: st.update(pending_apply=True),
+                )
+            except Exception:
+                app.logger.exception("Could not flag pending_apply")
+            return False
+        if s.get("pending_apply"):
+            try:
+                state.update_state(
+                    STATE_PATH, app.config["MASTER_KEY"],
+                    lambda st: st.update(pending_apply=False),
+                )
+            except Exception:
+                app.logger.exception("Could not clear pending_apply")
+        return True
+
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "POST":
@@ -152,17 +275,15 @@ def create_app() -> Flask:
                 abort(429)
 
             password = request.form.get("password", "")
-            auth_text = (SECRETS_DIR / "auth.ini").read_text()
-            phc_hash = ""
-            for line in auth_text.splitlines():
-                if line.startswith("password_hash ="):
-                    phc_hash = line.split("=", 1)[1].strip()
-                    break
+            phc_hash, epoch = _read_auth_ini()
 
             user_agent = request.headers.get("User-Agent", "")
             if crypto.verify_password(password, phc_hash):
+                session.clear()
                 session["admin"] = True
+                session["epoch"] = epoch
                 session["csrf_token"] = pysecrets.token_urlsafe(32)
+                session.permanent = True
                 ratelimit.clear(RATELIMIT_PATH, client_ip)
                 authlog.log_attempt(
                     AUTHLOG_PATH, success=True,
@@ -191,14 +312,7 @@ def create_app() -> Flask:
             new = request.form.get("new", "")
             confirm = request.form.get("confirm", "")
 
-            # Read current hash
-            auth_text = (SECRETS_DIR / "auth.ini").read_text()
-            current_hash = ""
-            for line in auth_text.splitlines():
-                if line.startswith("password_hash ="):
-                    current_hash = line.split("=", 1)[1].strip()
-                    break
-
+            current_hash, epoch = _read_auth_ini()
             if not crypto.verify_password(current, current_hash):
                 flash("Password atual incorreta.", "error")
                 return render_template("change_password.html"), 400
@@ -211,12 +325,12 @@ def create_app() -> Flask:
                 flash("As passwords novas não coincidem.", "error")
                 return render_template("change_password.html"), 400
 
-            new_hash = crypto.hash_password(new)
-            (SECRETS_DIR / "auth.ini").write_text(f"password_hash = {new_hash}\n")
-            import os as _os
-            _os.chmod(SECRETS_DIR / "auth.ini", 0o600)
-            flash("Password atualizada.", "success")
-            return redirect(url_for("peers_list"))
+            # Bumping the epoch invalidates every existing session,
+            # including this one — the admin logs in again everywhere.
+            _write_auth_ini(crypto.hash_password(new), epoch + 1)
+            session.clear()
+            flash("Password atualizada. Inicia sessão novamente.", "success")
+            return redirect(url_for("login"))
         return render_template("change_password.html")
 
     @app.route("/peers")
@@ -308,6 +422,7 @@ def create_app() -> Flask:
             total_peers=len(s["peers"]),
             imported_count=sum(1 for p in s["peers"] if not p.get("private_key_enc")),
             now_ts=now_ts,
+            pending_apply=s.get("pending_apply", False),
         )
 
     @app.route("/peers/new", methods=["GET", "POST"])
@@ -321,36 +436,35 @@ def create_app() -> Flask:
                 quota_gb = float(quota_raw) if quota_raw else 0.0
             except ValueError:
                 quota_gb = 0.0
-            if not name:
-                flash("Nome é obrigatório", "error")
+            if not _valid_peer_name(name):
+                flash("Nome inválido (obrigatório, máx. 100 caracteres, sem quebras de linha).", "error")
                 return render_template("peer_form.html")
-            if quota_gb < 0:
-                flash("Cota não pode ser negativa", "error")
+            if not math.isfinite(quota_gb) or quota_gb < 0:
+                flash("Cota inválida (número não negativo).", "error")
                 return render_template("peer_form.html")
 
             priv, pub = wg.wg_genkey()
-            s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
-            ip = state.allocate_ip(s, cfg["wg"]["subnet"], cfg["wg"]["server_ip"])
-            new_peer = {
-                "id": state.new_peer_id(),
-                "name": name,
-                "notes": notes,
-                "public_key": pub,
-                "private_key_enc": state.encrypt_private_key(priv, app.config["MASTER_KEY"]),
-                "ip": ip,
-                "disabled": False,
-                "quota_gb": quota_gb,
-                "quota_suspended": False,
-                "quota_state_updated_at": None,
-                "created_at": state.utc_now_iso(),
-            }
-            state.add_peer(s, new_peer)
-            state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
-            try:
-                wg.apply_state_to_wg(s, cfg, mode="syncconf")
-            except Exception:
-                app.logger.exception("Failed to apply state to wg")
-                flash("Peer criado no estado, mas falhou apply ao wg — ver logs", "error")
+
+            def mut(st):
+                ip = state.allocate_ip(st, cfg["wg"]["subnet"], cfg["wg"]["server_ip"])
+                st["peers"].append({
+                    "id": state.new_peer_id(),
+                    "name": name,
+                    "notes": notes,
+                    "public_key": pub,
+                    "private_key_enc": state.encrypt_private_key(priv, app.config["MASTER_KEY"]),
+                    "ip": ip,
+                    "disabled": False,
+                    "quota_gb": quota_gb,
+                    "quota_suspended": False,
+                    "quota_state_updated_at": None,
+                    "created_at": state.utc_now_iso(),
+                })
+                return ip
+
+            s, ip = state.update_state(STATE_PATH, app.config["MASTER_KEY"], mut)
+            if not _apply_or_flag(s, mode="syncconf"):
+                flash("Peer criado no estado, mas falhou apply ao wg — será repetido automaticamente", "error")
                 return redirect(url_for("peers_list"))
             flash(f"Peer criado: {name} ({ip})", "success")
             return redirect(url_for("peers_list"))
@@ -359,32 +473,32 @@ def create_app() -> Flask:
     @app.route("/peers/<peer_id>/delete", methods=["POST"])
     @login_required
     def peer_delete(peer_id):
-        s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
-        if not state.remove_peer(s, peer_id):
-            abort(404)
-        state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
+        def mut(st):
+            if not state.remove_peer(st, peer_id):
+                raise KeyError(peer_id)
         try:
-            wg.apply_state_to_wg(s, cfg, mode="restart")
-        except Exception:
-            app.logger.exception("Failed to apply after delete")
-            flash("Peer removido do estado, mas apply falhou — ver logs", "error")
+            s, _ = state.update_state(STATE_PATH, app.config["MASTER_KEY"], mut)
+        except KeyError:
+            abort(404)
+        if not _apply_or_flag(s, mode="restart"):
+            flash("Peer removido do estado, mas apply falhou — será repetido automaticamente", "error")
         flash("Peer apagado", "success")
         return redirect(url_for("peers_list"))
 
     @app.route("/peers/<peer_id>/toggle", methods=["POST"])
     @login_required
     def peer_toggle(peer_id):
-        s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
-        peer = state.find_peer_by_id(s, peer_id)
-        if peer is None:
-            abort(404)
-        state.set_peer_disabled(s, peer_id, not peer.get("disabled", False))
-        state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
+        def mut(st):
+            peer = state.find_peer_by_id(st, peer_id)
+            if peer is None:
+                raise KeyError(peer_id)
+            peer["disabled"] = not peer.get("disabled", False)
         try:
-            wg.apply_state_to_wg(s, cfg, mode="restart")
-        except Exception:
-            app.logger.exception("Failed to apply after toggle")
-            flash("Toggle registrado mas apply falhou", "error")
+            s, _ = state.update_state(STATE_PATH, app.config["MASTER_KEY"], mut)
+        except KeyError:
+            abort(404)
+        if not _apply_or_flag(s, mode="restart"):
+            flash("Toggle registrado mas apply falhou — será repetido automaticamente", "error")
         return redirect(url_for("peers_list"))
 
     def _get_server_public_key() -> str:
@@ -421,10 +535,14 @@ def create_app() -> Flask:
             allowed_ips=config.get_allowed_ips_list(cfg),
         )
         text = confgen.render_conf(peer_cfg)
+        fname = secure_filename(f"wg-{peer['name']}") or "wg-peer"
         return Response(
             text,
             mimetype="text/plain",
-            headers={"Content-Disposition": f'attachment; filename="wg-{peer["name"]}.conf"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{fname}.conf"',
+                "Cache-Control": "no-store",
+            },
         )
 
     @app.route("/peers/<peer_id>/qr")
@@ -448,7 +566,8 @@ def create_app() -> Flask:
         )
         text = confgen.render_conf(peer_cfg)
         png = confgen.render_qr_png(text)
-        return Response(png, mimetype="image/png")
+        return Response(png, mimetype="image/png",
+                        headers={"Cache-Control": "no-store"})
 
     @app.route("/api/bandwidth/<peer_id>")
     @login_required
@@ -597,13 +716,15 @@ def create_app() -> Flask:
         try:
             wg.update_interface_in_conf(_conf_path(), updates)
             s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
-            wg.apply_state_to_wg(s, cfg, mode="restart")
         except FileNotFoundError:
             flash(f"Conf não encontrado: {_conf_path()}", "error")
             return redirect(url_for("settings_page"))
         except Exception:
             app.logger.exception("Failed to update interface settings")
             flash("Falha ao aplicar — conf não alterado ou parcialmente aplicado, ver logs", "error")
+            return redirect(url_for("settings_page"))
+        if not _apply_or_flag(s, mode="restart"):
+            flash("Falha ao aplicar ao WireGuard — será repetido automaticamente (ver logs)", "error")
             return redirect(url_for("settings_page"))
         flash("Interface atualizada e wg-quick reiniciado — peers reconectam em segundos", "success")
         return redirect(url_for("settings_page"))
@@ -616,8 +737,8 @@ def create_app() -> Flask:
         allowed_ips = request.form.get("allowed_ips", "").strip()
         dns = request.form.get("dns", "").strip()
 
-        if not endpoint_host:
-            flash("Endpoint host é obrigatório (ex: vpn.exemplo.pt)", "error")
+        if not _valid_endpoint_host(endpoint_host):
+            flash("Endpoint host inválido (hostname ou IP, sem espaços nem quebras de linha).", "error")
             return redirect(url_for("settings_page"))
         if not endpoint_port.isdigit() or not (1 <= int(endpoint_port) <= 65535):
             flash("Porta do endpoint inválida (1-65535)", "error")
@@ -656,13 +777,15 @@ def create_app() -> Flask:
         try:
             wg.update_interface_in_conf(_conf_path(), {"PrivateKey": priv})
             s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
-            wg.apply_state_to_wg(s, cfg, mode="restart")
         except FileNotFoundError:
             flash(f"Conf não encontrado: {_conf_path()}", "error")
             return redirect(url_for("settings_page"))
         except Exception:
             app.logger.exception("Failed to rotate server key")
             flash("Falha ao rodar a chave — ver logs (conf pode ter ficado com a chave antiga)", "error")
+            return redirect(url_for("settings_page"))
+        if not _apply_or_flag(s, mode="restart"):
+            flash("Chave rodada no conf, mas apply ao wg falhou — será repetido automaticamente", "error")
             return redirect(url_for("settings_page"))
         flash(
             f"Private key rodada. Nova public key: {pub} — "
@@ -706,43 +829,60 @@ def create_app() -> Flask:
                 quota_gb = float(quota_raw) if quota_raw else 0.0
             except ValueError:
                 quota_gb = 0.0
-            if not name:
-                flash("Nome é obrigatório", "error")
+            if not _valid_peer_name(name):
+                flash("Nome inválido (obrigatório, máx. 100 caracteres, sem quebras de linha).", "error")
                 return render_template("peer_edit.html", peer=peer)
-            if quota_gb < 0:
-                flash("Cota não pode ser negativa", "error")
+            if not math.isfinite(quota_gb) or quota_gb < 0:
+                flash("Cota inválida (número não negativo).", "error")
                 return render_template("peer_edit.html", peer=peer)
-            peer["name"] = name
-            peer["notes"] = notes
-            peer["quota_gb"] = quota_gb
+            if new_priv and not _valid_wg_private_key(new_priv, peer.get("public_key", "")):
+                flash("Chave privada inválida: tem de ser base64 (44 chars) e corresponder à public key do peer.", "error")
+                return render_template("peer_edit.html", peer=peer)
+
+            def mut(st):
+                p = state.find_peer_by_id(st, peer_id)
+                if p is None:
+                    raise KeyError(peer_id)
+                p["name"] = name
+                p["notes"] = notes
+                p["quota_gb"] = quota_gb
+                if new_priv:
+                    p["private_key_enc"] = state.encrypt_private_key(
+                        new_priv, app.config["MASTER_KEY"])
+
+            try:
+                state.update_state(STATE_PATH, app.config["MASTER_KEY"], mut)
+            except KeyError:
+                abort(404)
             if new_priv:
-                peer["private_key_enc"] = state.encrypt_private_key(new_priv, app.config["MASTER_KEY"])
                 flash("Chave privada atualizada — já podes descarregar .conf e QR", "success")
             else:
                 flash("Peer atualizado", "success")
-            state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
             return redirect(url_for("peers_list"))
         return render_template("peer_edit.html", peer=peer)
 
     @app.route("/peers/<peer_id>/regenerate", methods=["POST"])
     @login_required
     def peer_regenerate(peer_id):
-        s = state.load_state(STATE_PATH, app.config["MASTER_KEY"])
-        peer = state.find_peer_by_id(s, peer_id)
-        if peer is None:
-            abort(404)
         priv, pub = wg.wg_genkey()
-        peer["private_key_enc"] = state.encrypt_private_key(priv, app.config["MASTER_KEY"])
-        peer["public_key"] = pub
-        state.save_state(STATE_PATH, s, app.config["MASTER_KEY"])
+
+        def mut(st):
+            peer = state.find_peer_by_id(st, peer_id)
+            if peer is None:
+                raise KeyError(peer_id)
+            peer["private_key_enc"] = state.encrypt_private_key(priv, app.config["MASTER_KEY"])
+            peer["public_key"] = pub
+            return peer["name"]
+
         try:
-            wg.apply_state_to_wg(s, cfg, mode="syncconf")
-        except Exception:
-            app.logger.exception("Failed to apply after key regeneration")
-            flash("Chaves geradas no estado, mas apply ao wg falhou — ver logs", "error")
+            s, peer_name = state.update_state(STATE_PATH, app.config["MASTER_KEY"], mut)
+        except KeyError:
+            abort(404)
+        if not _apply_or_flag(s, mode="syncconf"):
+            flash("Chaves geradas no estado, mas apply ao wg falhou — será repetido automaticamente", "error")
             return redirect(url_for("peers_list"))
         flash(
-            f"Novo par de chaves para {peer['name']} — "
+            f"Novo par de chaves para {peer_name} — "
             "descarrega o .conf/QR e reimporta no dispositivo; "
             "a config antiga deixa de funcionar.",
             "warning",
@@ -765,7 +905,10 @@ def create_app() -> Flask:
                 capture_output=True, check=True,
             )
             flash("VPN reativada", "success")
-        return redirect(request.referrer or url_for("peers_list"))
+        ref = request.referrer
+        if ref and ref.startswith(request.host_url):
+            return redirect(ref)
+        return redirect(url_for("peers_list"))
 
     @app.errorhandler(403)
     def forbidden(e):

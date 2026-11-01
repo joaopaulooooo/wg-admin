@@ -3,6 +3,11 @@
 # Run as root: sudo bash install.sh
 set -euo pipefail
 
+# Everything this script creates (secrets, keys, state, venv) is root-only;
+# a permissive umask would leave master/session keys world-readable in the
+# window before the explicit chmods below.
+umask 077
+
 INSTALL_DIR="/wg-admin"
 PYTHON_MIN_VERSION="3.11"
 
@@ -320,17 +325,30 @@ chmod 0600 "$INSTALL_DIR/secrets"/*.key
 
 # --- Admin password ---
 if [[ ! -f "$INSTALL_DIR/secrets/auth.ini" ]]; then
-  info "Setting admin password"
-  read -r -s -p "Admin password: " PWD1; echo
-  read -r -s -p "Confirm: " PWD2; echo
-  [[ "$PWD1" == "$PWD2" ]] || err "Passwords don't match"
-  HASH=$("$INSTALL_DIR/venv/bin/python" -c "
+  info "Setting admin password (minimum 8 characters)"
+  while true; do
+    read -r -s -p "Admin password: " PWD1; echo
+    if [[ ${#PWD1} -lt 8 ]]; then
+      info "Password demasiado curta (mínimo 8 caracteres) — tenta outra vez."
+      continue
+    fi
+    read -r -s -p "Confirm: " PWD2; echo
+    if [[ "$PWD1" != "$PWD2" ]]; then
+      info "Passwords não coincidem — tenta outra vez."
+      continue
+    fi
+    break
+  done
+  # Password goes in via stdin, never argv (argv is visible in /proc).
+  HASH=$(printf '%s' "$PWD1" | "$INSTALL_DIR/venv/bin/python" -c "
 import sys
 from argon2 import PasswordHasher
-print(PasswordHasher(time_cost=3, memory_cost=16384, parallelism=1).hash(sys.argv[1]))
-" "$PWD1")
+print(PasswordHasher(time_cost=3, memory_cost=16384, parallelism=1).hash(sys.stdin.read()))
+")
+  [[ -n "$HASH" ]] || err "Falha ao gerar o hash da password"
   cat > "$INSTALL_DIR/secrets/auth.ini" <<EOF
 password_hash = $HASH
+session_epoch = 0
 EOF
   chmod 0600 "$INSTALL_DIR/secrets/auth.ini"
 fi

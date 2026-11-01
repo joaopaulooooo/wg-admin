@@ -12,6 +12,12 @@
   </div>
   {% endif %}
 
+  {% if pending_apply %}
+  <div class="banner banner-danger">
+    ⠿ A última alteração ainda não foi aplicada ao WireGuard — o sistema repete automaticamente (≤5 min) ou na próxima alteração. Ver logs com `journalctl -u wg-admin -e`.
+  </div>
+  {% endif %}
+
   <div class="stats">
     <div class="stat">
       <span class="stat-label">Total Peers</span>
@@ -130,7 +136,7 @@
           </a>
           {% endif %}
           <form method="post" action="{{ url_for('peer_regenerate', peer_id=peer.id) }}"
-                onsubmit="return confirm('{{ 'Gerar novo par de chaves' if not peer.private_key_enc else 'Rodar a private key' }} para {{ peer.name }}?\n\n A config atual do dispositivo DEIXA DE FUNCIONAR até reimportares o novo QR/.conf.\n Continuar?');">
+                data-confirm="{{ 'Gerar novo par de chaves' if not peer.private_key_enc else 'Rodar a private key' }} para {{ peer.name }}?&#10;&#10;A config atual do dispositivo DEIXA DE FUNCIONAR até reimportares o novo QR/.conf.&#10;Continuar?">
             <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
             <button type="submit" class="secondary">{{ 'Gerar chaves' if not peer.private_key_enc else 'Rodar chave' }}</button>
           </form>
@@ -142,7 +148,7 @@
             <button type="submit" class="secondary">{{ "Ativar" if peer.disabled else "Desativar" }}</button>
           </form>
           <form method="post" action="{{ url_for('peer_delete', peer_id=peer.id) }}"
-                onsubmit="return confirm('Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.');">
+                data-confirm="Apagar {{ peer.name }}? Todos os peers ativos vão desconectar por ~1s.">
             <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
             <button type="submit" class="danger">Apagar</button>
           </form>
@@ -284,6 +290,17 @@
 </div>
 
 <script src="{{ url_for('static', filename='vendor/chartjs.min.js') }}"></script>
+<script>
+(function() {
+  // Confirm dialogs live in data-confirm attributes (properly HTML-escaped
+  // by Jinja) — never interpolated into inline JS strings.
+  document.querySelectorAll('form[data-confirm]').forEach(function(f) {
+    f.addEventListener('submit', function(e) {
+      if (!window.confirm(f.dataset.confirm)) e.preventDefault();
+    });
+  });
+})();
+</script>
 <script src="{{ url_for('static', filename='js/bandwidth-modal.js') }}"></script>
 <script src="{{ url_for('static', filename='js/global-chart.js') }}"></script>
 {% endblock %}

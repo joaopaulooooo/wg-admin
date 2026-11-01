@@ -248,3 +248,79 @@ def test_migrate_state_handles_empty_peers():
     state = {"version": 1, "peers": []}
     migrate_state(state)  # should not raise
     assert state["peers"] == []
+
+
+def test_update_state_mutator_sees_authoritative_state(tmp_path):
+    """A transaction started from a stale read cannot resurrect a concurrent
+    change: the mutator always receives the on-disk (locked) state."""
+    import os as _os
+    from wg_admin import state
+
+    key = _os.urandom(32)
+    p = tmp_path / "state.json.enc"
+    s = state.empty_state()
+    s["peers"] = [{"id": "1", "name": "x", "public_key": "PUB", "ip": "10.0.0.2",
+                   "disabled": False}]
+    state.save_state(p, s, key)
+
+    stale = state.load_state(p, key)  # what a slow worker would still hold
+
+    def disable(st):
+        st["peers"][0]["disabled"] = True
+
+    state.update_state(p, key, disable)
+
+    # A later transaction based on the stale snapshot re-reads under the
+    # lock, so the disable is visible and cannot be silently lost.
+    seen = {}
+    def edit(st):
+        seen["disabled"] = st["peers"][0]["disabled"]
+        st["peers"][0]["notes"] = "edited"
+    state.update_state(p, key, edit)
+
+    assert seen["disabled"] is True
+    final = state.load_state(p, key)
+    assert final["peers"][0]["disabled"] is True
+    assert final["peers"][0]["notes"] == "edited"
+    assert stale["peers"][0]["disabled"] is False  # stale copy untouched
+
+
+def test_save_state_keeps_main_file_present(tmp_path, monkeypatch):
+    """During backup rotation the live file must never disappear (a lockless
+    reader would otherwise see an empty state)."""
+    import os as _os
+    from wg_admin import state
+
+    key = _os.urandom(32)
+    p = tmp_path / "state.json.enc"
+    state.save_state(p, state.empty_state(), key)  # first save creates it
+
+    real_replace = _os.replace
+    checks = []
+    def spy(src, dst):
+        if str(dst) == str(p):
+            checks.append(p.exists())
+        return real_replace(src, dst)
+    monkeypatch.setattr(state.os, "replace", spy)
+
+    state.save_state(p, state.empty_state(), key)
+    state.save_state(p, state.empty_state(), key)
+    assert checks and all(checks), "main state file vanished during rotation"
+
+
+def test_update_state_nochanges_writes_nothing(tmp_path):
+    """A mutator raising NoChanges aborts the transaction with no write."""
+    import os as _os
+    from wg_admin import state
+
+    key = _os.urandom(32)
+    p = tmp_path / "state.json.enc"
+    state.save_state(p, state.empty_state(), key)
+    before = p.stat().st_mtime_ns
+
+    def mut(st):
+        raise state.NoChanges
+
+    _, result = state.update_state(p, key, mut)
+    assert result is None
+    assert p.stat().st_mtime_ns == before

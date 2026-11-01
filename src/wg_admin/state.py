@@ -28,7 +28,12 @@ def empty_state() -> dict:
         "created_at": utc_now_iso(),
         "updated_at": utc_now_iso(),
         "peers": [],
+        "pending_apply": False,
     }
+
+
+class NoChanges(Exception):
+    """Raise inside an update_state() mutator to abort with no write."""
 
 
 def new_peer_id() -> str:
@@ -46,8 +51,10 @@ def migrate_state(state_data: dict) -> None:
     """Add new fields to peers from older state versions (in-place).
 
     Idempotent: peers that already have the fields are untouched.
-    Currently adds: quota_gb, quota_suspended, quota_state_updated_at.
+    Currently adds: quota_gb, quota_suspended, quota_state_updated_at,
+    and the top-level pending_apply flag.
     """
+    state_data.setdefault("pending_apply", False)
     for peer in state_data.get("peers", []):
         peer.setdefault("quota_gb", 0.0)
         peer.setdefault("quota_suspended", False)
@@ -108,7 +115,7 @@ def _flock(state_path: Path, timeout: float = LOCK_TIMEOUT_SEC) -> Iterator[None
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    tmp = Path(str(path) + ".tmp")
+    tmp = Path(f"{path}.tmp.{os.getpid()}.{time.monotonic_ns()}")
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -144,33 +151,63 @@ def load_state(state_path: Path, master_key: bytes) -> dict:
     return state_data
 
 
-def save_state(state_path: Path, state_data: dict, master_key: bytes) -> None:
-    """Encrypt and save state atomically. Rotates .bak and .bak1.
+def _save_locked(state_path: Path, state_data: dict, master_key: bytes) -> None:
+    """Encrypt and write state while the flock is held.
 
-    Encryption happens BEFORE any filesystem mutation so a crypto failure
-    cannot destroy the live state file. The caller's state_data dict is
-    mutated (updated_at) only inside the lock — failure leaves it untouched.
+    Rotation order keeps the main file present at all times: the new
+    envelope replaces the live file via os.replace, and the backup is
+    written from the in-memory previous bytes afterwards. A lockless
+    reader therefore always sees either the old or the new state —
+    never a missing file (which load_state would treat as empty).
     """
+    prev = _atomic_read_bytes(state_path) if state_path.exists() else None
+    state_data["updated_at"] = utc_now_iso()
     plaintext = json.dumps(state_data, separators=(",", ":")).encode()
     envelope = crypto.encrypt_state(plaintext, master_key)
     envelope_bytes = json.dumps(envelope).encode()
 
+    if prev is not None:
+        bak = state_path.with_suffix(state_path.suffix + ".bak")
+        bak1 = state_path.with_suffix(state_path.suffix + ".bak1")
+        if bak.exists():
+            os.replace(bak, bak1)
+        _atomic_write_bytes(bak, prev)
+    _atomic_write_bytes(state_path, envelope_bytes)
+
+
+def save_state(state_path: Path, state_data: dict, master_key: bytes) -> None:
+    """Encrypt and save state atomically. Rotates .bak and .bak1.
+
+    Encryption happens BEFORE any filesystem mutation so a crypto failure
+    cannot destroy the live state file.
+    """
     with _flock(state_path):
-        state_data["updated_at"] = utc_now_iso()
-        # Re-serialize with the new updated_at timestamp.
-        plaintext = json.dumps(state_data, separators=(",", ":")).encode()
-        envelope = crypto.encrypt_state(plaintext, master_key)
-        envelope_bytes = json.dumps(envelope).encode()
+        _save_locked(state_path, state_data, master_key)
 
-        # Rotate backups (only after encryption succeeded).
-        if state_path.exists():
-            bak = state_path.with_suffix(state_path.suffix + ".bak")
-            bak1 = state_path.with_suffix(state_path.suffix + ".bak1")
-            if bak.exists():
-                os.replace(bak, bak1)
-            os.replace(state_path, bak)
 
-        _atomic_write_bytes(state_path, envelope_bytes)
+def update_state(state_path: Path, master_key: bytes, mutator):
+    """Serialized read-modify-write transaction.
+
+    The flock is held across load → mutator → save, so concurrent workers
+    (gunicorn) and the bandwidth timer can no longer clobber each other's
+    changes: the mutator always sees the authoritative state, and its
+    effect cannot be silently overwritten by a stale writer.
+
+    mutator(state_dict) mutates the dict in place and may return a value;
+    it may raise state.NoChanges to abort with no write, or any other
+    exception to abort without saving (the exception propagates).
+
+    Returns (state_dict, mutator_result); result is None when aborted
+    with NoChanges. The returned dict is the saved, authoritative state.
+    """
+    with _flock(state_path):
+        state_data = load_state(state_path, master_key)
+        try:
+            result = mutator(state_data)
+        except NoChanges:
+            return state_data, None
+        _save_locked(state_path, state_data, master_key)
+        return state_data, result
 
 
 def encrypt_private_key(private_key: str, master_key: bytes) -> str:

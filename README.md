@@ -3,8 +3,8 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-185-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-227-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
 ## Features
@@ -29,15 +29,23 @@ Minimal WireGuard peer management panel for Linux servers. Python + Flask + syst
 
 ### Security
 - **Single admin password** (Argon2id, m=16MB/t=3/p=1)
-- **Change password** page in UI
+- **Change password** page in UI — **revokes every existing session** (sessions are pinned to a server-side epoch bumped on each change)
 - **File-based rate limiting** — 5 fails / 30 min IP block, survives across processes
 - **Auth attempt log** — successful and failed logins written as JSON lines to `/wg-admin/secrets/auth.log`, rotates at 100 KB (5 backups kept)
-- **CSRF tokens** on every state-changing POST
+- **CSRF tokens** on every state-changing POST (constant-time comparison)
 - **Encrypted state at rest**: AES-256-GCM with HKDF-SHA256 key derivation
 - **Per-peer private key encryption** with domain-separated HKDF info
-- **Atomic writes** with `flock` and rotated `.bak`/`.bak1` backups
-- **Gunicorn WSGI server** (4 workers) — replaces the single-threaded Werkzeug dev server, which silently dropped new connections once the accept queue filled under scanner load
+- **Serialized state transactions** (`flock` across load→mutate→save) — concurrent workers and the quota timer cannot clobber each other, and backup rotation never makes the state file disappear mid-read
+- **Failed applies are retried** — a change that fails to reach WireGuard is flagged `pending_apply`, retried every 5 min and surfaced as a banner on `/peers`
+- **Strict input validation** — peer names single-line ≤100 chars; pasted private keys must be well-formed **and** match the peer's public key; endpoint must be a real hostname/IP; quotas reject `nan`/`inf` (blocks config-injection into `wg0.conf`)
+- **`.conf`/QR served with `Cache-Control: no-store`** (they contain private keys); download filename sanitized
+- **Security headers** on every response: CSP (`default-src 'self'`, `frame-ancestors 'none'`), `X-Frame-Options`, `nosniff`, `Referrer-Policy`, HSTS
+- **Atomic writes** with `flock` and rotated `.bak`/`.bak1` backups; WireGuard confs always rewritten `0600`
+- **Installer hardening** — rejects empty/short admin passwords (min 8), passes the password to the hasher via stdin (never argv), runs under `umask 077` so keys are never world-readable
+- **`uninstall.sh --keep-state`** creates the secrets backup as `0600`, stops services first, and aborts instead of deleting on a failed backup
+- **Gunicorn WSGI server** (4 workers, `>=23.0` — below 22.0 is affected by request-smuggling CVEs) — replaces the single-threaded Werkzeug dev server, which silently dropped new connections once the accept queue filled under scanner load
 - **Hardened systemd unit** (`ProtectSystem=strict`, `RestrictAddressFamilies` with `AF_NETLINK` for wg access)
+- **CI actions pinned by commit SHA**; [security policy](SECURITY.md) with private vulnerability reporting
 
 ### Install experience
 - **Auto-install WireGuard** if missing (apt/dnf/pacman/apk)
@@ -103,6 +111,11 @@ sudo bash /tmp/wg-admin/install.sh
 
 State, secrets, and config are preserved. The script auto-detects IP changes and updates endpoint if needed.
 
+**Upgrading to v0.3.0**: all existing sessions are logged out once (sessions are now pinned to
+a server-side epoch that didn't exist before). The bandwidth timer's systemd unit is
+re-copied with the fix that lets quota enforcement write `/etc/wireguard`. Log in again and
+you're up to date.
+
 ## Uninstall
 
 ```bash
@@ -123,7 +136,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-185 tests, 90% coverage.
+227 tests, 89% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -149,14 +162,14 @@ is not used in production.
 
 templates/        # Jinja2: base, login, peers, peer_form, peer_edit, change_password, server_status, error
 static/           # NOC-at-night CSS (style.css)
-static/js/        # bandwidth-modal, whatsapp-modal, global-chart
+static/js/        # bandwidth-modal, global-chart
 static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 185 tests, integration smoke test
+tests/            # 227 tests, integration smoke test
 docs/             # specs, plans, smoke test checklist
-.github/          # CI workflow, issue/PR templates
+.github/          # CI workflow (actions pinned by SHA), issue/PR templates
 ```
 
 **State persistence** (`/wg-admin/state.json.enc`):
@@ -175,6 +188,7 @@ docs/             # specs, plans, smoke test checklist
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md)
 - [v0.1.0 design spec](docs/superpowers/specs/2026-06-17-wg-admin-design.md)
 - [v0.1.0 implementation plan](docs/superpowers/plans/2026-06-17-wg-admin-implementation.md)
 - [Quotas/graphs/syncconf/WhatsApp design](docs/superpowers/specs/2026-06-27-quota-graphs-syncconf-whatsapp-design.md)
