@@ -150,7 +150,9 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-359 tests, 100% coverage.
+359 tests, 100% coverage (`pytest --cov=wg_admin --cov-report=term-missing`).
+Unreachable-by-design lines carry `# pragma: no cover` — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the test policy.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 

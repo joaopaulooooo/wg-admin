@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Docs
+- **CONTRIBUTING.md**: PR checklist now spells out the coverage policy (100% expected, failure paths included, `# pragma: no cover` only for unreachable-by-design lines with a reason on the line) and a machine-independence rule for tests (patch module paths; never depend on host files like `/etc/wireguard/wg0.conf` — the suite runs identically on servers and CI). README links the policy from the Development section.
+
 ### Tests
 - **Coverage pushed from 88% to 100%** (359 tests, was 259). Highlights: the previously-untested `peer_edit` success flow; legacy `wg show dump` parser formats (ifname-prefixed with/without PSK, short/malformed lines); every settings failure branch (missing conf, bad endpoint/port, config write failures, rotate-key failures); quota banner/sparkline/suspension rendering with live statuses; auth robustness (`auth.ini` missing/garbage epoch fails closed); the real GitHub-tag fetch parser; `_schedule_update`/`_schedule_shell` internals (systemd-run success + fallbacks); flock timeout; atomic-write failure cleanups; 429/500 error pages; server-pubkey live-vs-config precedence. Unreachable-by-design lines (`if __name__` guards, dev-server entrypoint, `_LazyApp`) are marked `# pragma: no cover` instead of carrying fake tests, and the previously machine-dependent `_read_iface` branch now has deterministic tests for both conf-present and conf-absent machines.
 

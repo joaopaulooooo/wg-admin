@@ -30,18 +30,26 @@ pytest
 ## Before opening a PR
 
 1. **Run the tests**: `pytest -v` — all green
-2. **Don't break existing behavior** — if changing a public interface, update callers and tests
-3. **Keep changes focused** — one feature/fix per PR
-4. **Follow existing style** — Python is formatted to PEP 8, no exotic dependencies
-5. **Add tests** for new behavior
+2. **Run coverage**: `pytest --cov=wg_admin --cov-report=term-missing` — the project
+   holds **100% coverage**; new code comes with tests for every branch, including
+   failure paths. Lines that are unreachable by design (`if __name__` guards,
+   dev-server entrypoint, defensive fallbacks) are marked `# pragma: no cover`
+   instead of carrying fake tests — use it sparingly and say why on the line.
+3. **Don't break existing behavior** — if changing a public interface, update callers and tests
+4. **Keep changes focused** — one feature/fix per PR
+5. **Follow existing style** — Python is formatted to PEP 8, no exotic dependencies
+6. **Add tests** for new behavior
+7. **Tests must be machine-independent** — never rely on files outside the test's
+   own `tmp_path` (e.g. whether `/etc/wireguard/wg0.conf` happens to exist); patch
+   module paths via fixtures like the existing suite does
 
 ## Project layout
 
 ```
 src/wg_admin/      Python source (one responsibility per module)
-tests/             pytest unit tests (TDD)
-templates/         Jinja2 HTML
-static/            CSS
+tests/             pytest tests (359, 100% coverage)
+templates/         Jinja2 HTML (i18n via t())
+static/            CSS + JS
 systemd/           systemd unit files
 docs/              specs, plans, smoke test
 install.sh         installer
