@@ -31,6 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Peer toggle form was missing its CSRF token** — the Ativar/Desativar form posted without `csrf_token` and would 403 against the CSRF check.
 
 ### Added
+- **In-panel self-update** — the sidebar checks GitHub (server-side, cached for 1 h) and shows an update button next to the version whenever a newer tag exists. One click + confirm downloads that tag's tarball and re-runs the idempotent `install.sh` inside a transient systemd unit (`wg-admin-selfupdate`, `journalctl -u wg-admin-selfupdate -f` to watch). The transient unit survives the panel restart that ends the install — peers are untouched and the admin session persists (the page polls and reloads itself on the new version). Tags are strictly validated (`vX.Y.Z`, newer than current) and the trigger is CSRF-protected.
 - **Key generation for imported peers** — peers imported from `wg0.conf` (🔒, no stored private key) now have a **🔑 Gerar chaves** button on their card: generates a fresh keypair, stores the private key encrypted, updates the peer's public key in state + `wg0.conf` (applied via zero-downtime `syncconf`), which unlocks `.conf` download and QR. The confirm dialog warns that the device's current config stops working until it re-imports the new QR.
 - **Per-peer private key rotation** — peers created in wg-admin now have a **🔑 Rodar chave** button on their card (same route): rotates that peer's keypair, applies via `syncconf`, and the new `.conf`/QR are immediately downloadable.
 

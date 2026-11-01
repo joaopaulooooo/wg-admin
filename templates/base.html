@@ -71,7 +71,7 @@
   <div class="sidebar-footer">
     <div class="sidebar-meta">
       <span class="meta-label">// versão</span>
-      <span class="meta-value">0.3.0</span>
+      <span class="meta-value" id="wg-version" data-csrf="{{ session.csrf_token }}">{{ version }}</span>
     </div>
     <a href="https://github.com/joaopaulooooo/wg-admin" target="_blank" rel="noopener" class="sidebar-github">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -100,6 +100,61 @@
 
   {% block content %}{% endblock %}
 </main>
+
+{% if session.admin %}
+<script>
+(function() {
+  // Self-update: check GitHub via the panel (server-side, cached 1h), show a
+  // button next to the version only when a newer tag exists.
+  var host = document.getElementById('wg-version');
+  if (!host) return;
+
+  fetch('/api/update/check').then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.update_available || !d.latest) return;
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'update-btn';
+    btn.title = 'Instalar ' + d.latest;
+    btn.textContent = '↻ atualizar p/ ' + d.latest.replace(/^v/, '');
+
+    btn.addEventListener('click', function() {
+      if (!window.confirm(
+          'Atualizar wg-admin para ' + d.latest + '?\n\n' +
+          'O painel descarrega a versão nova e reinicia sozinho (normalmente <1 min).\n' +
+          'Os peers WireGuard NÃO são afetados e a tua sessão mantém-se.\n' +
+          'Progresso: journalctl -u wg-admin-selfupdate -f')) return;
+
+      var fd = new FormData();
+      fd.append('csrf_token', host.dataset.csrf);
+      fd.append('tag', d.latest);
+      btn.disabled = true;
+      btn.textContent = 'a atualizar…';
+
+      fetch('/settings/update', { method: 'POST', body: fd }).catch(function() {});
+
+      // Poll until the *new* version answers, then reload in place.
+      var target = d.latest.replace(/^v/, '');
+      var tries = 0;
+      setTimeout(function poll() {
+        fetch('/api/update/check')
+          .then(function(r) { return r.json(); })
+          .then(function(j) {
+            if (j && j.current === target) { window.location.reload(); return; }
+            if (++tries < 200) setTimeout(poll, 3000);
+          })
+          .catch(function() {
+            if (++tries < 200) setTimeout(poll, 3000);
+          });
+      }, 5000);
+    });
+
+    host.appendChild(document.createElement('br'));
+    host.appendChild(btn);
+  }).catch(function() { /* offline / error — silently skip */ });
+})();
+</script>
+{% endif %}
 </body>
 </html>
 

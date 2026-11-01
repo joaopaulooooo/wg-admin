@@ -3,8 +3,8 @@
 Minimal WireGuard peer management panel for Linux servers. Python + Flask + systemd. NOC-style dark UI, designed for sysadmins.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-227-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-89%25-brightgreen)
+![Tests](https://img.shields.io/badge/tests-243-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-88%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 
 ## Features
@@ -26,6 +26,9 @@ Minimal WireGuard peer management panel for Linux servers. Python + Flask + syst
 - **VPN kill switch**: stop/start the entire VPN from the sidebar
 - **Live charts**: sparkline per card, modal per peer, global stacked chart at top of /peers
 - **Server Status page**: live CPU %, memory, per-mount disk usage, uptime, load average, hostname/kernel/arch, public IP, and WireGuard stats (peers online/total, rx/tx totals + rate). Auto-refreshes every 5 s, pauses on hidden tab.
+
+### Self-update
+- **In-panel updater**: the sidebar polls GitHub for newer tags (server-side, cached 1 h) and shows an update button next to the version when one exists. Confirm → the panel downloads the tag and re-runs the idempotent `install.sh` in a transient systemd unit (`wg-admin-selfupdate`) that survives the panel's own restart. WireGuard peers are not affected, the admin session persists, and the page reloads itself on the new version.
 
 ### Security
 - **Single admin password** (Argon2id, m=16MB/t=3/p=1)
@@ -111,6 +114,10 @@ sudo bash /tmp/wg-admin/install.sh
 
 State, secrets, and config are preserved. The script auto-detects IP changes and updates endpoint if needed.
 
+From v0.3.0 the panel also updates **itself**: when a newer tag exists on GitHub, a button
+appears next to the version in the sidebar — confirm and it downloads + reinstalls on its
+own (the CLI route above still works for headless servers).
+
 **Upgrading to v0.3.0**: all existing sessions are logged out once (sessions are now pinned to
 a server-side epoch that didn't exist before). The bandwidth timer's systemd unit is
 re-copied with the fix that lets quota enforcement write `/etc/wireguard`. Log in again and
@@ -136,7 +143,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-227 tests, 89% coverage.
+243 tests, 88% coverage.
 
 CI runs on every push: [.github/workflows/ci.yml](.github/workflows/ci.yml) — Python 3.11/3.12 matrix.
 
@@ -167,7 +174,7 @@ static/vendor/    # Chart.js v4 (local copy, no CDN at runtime)
 systemd/          # wg-admin.service, wg-admin-bandwidth.{service,timer}
 install.sh        # Idempotent installer with provider auto-detection
 uninstall.sh      # Cleanup with optional state backup
-tests/            # 227 tests, integration smoke test
+tests/            # 243 tests, integration smoke test
 docs/             # specs, plans, smoke test checklist
 .github/          # CI workflow (actions pinned by SHA), issue/PR templates
 ```

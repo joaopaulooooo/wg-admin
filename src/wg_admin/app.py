@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import json
 import math
 import os
 import re
 import secrets as pysecrets
 import subprocess
+import time
+import urllib.request
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from pathlib import Path
@@ -19,6 +22,7 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 from . import authlog, bandwidth, confgen, config, crypto, ratelimit, serverstats, state, wg
+from .version import __version__
 
 # These paths are patched in tests via monkeypatch.
 SECRETS_DIR = Path("/wg-admin/secrets")
@@ -99,6 +103,106 @@ def _valid_endpoint_host(host: str) -> bool:
         return True
     except ValueError:
         return re.match(r"^[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?$", host) is not None
+
+
+# ─── Self-update ────────────────────────────────────────────────────────────
+
+UPDATE_REPO = "joaopaulooooo/wg-admin"
+UPDATE_REPO_URL = f"https://github.com/{UPDATE_REPO}"
+UPDATE_CLONE_DIR = Path("/wg-admin/.selfupdate")
+UPDATE_UNIT = "wg-admin-selfupdate"
+UPDATE_CHECK_TTL = 3600.0  # cache GitHub lookups for 1h (unauth API = 60 req/h)
+_TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+
+
+def _version_tuple(tag: str):
+    """'v1.2.3' -> (1, 2, 3); anything else -> None."""
+    m = _TAG_RE.match(tag or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def _fetch_latest_tag():
+    """Latest semver tag from the GitHub API. Raises on network errors."""
+    url = f"https://api.github.com/repos/{UPDATE_REPO}/tags?per_page=20"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"wg-admin/{__version__}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=4) as resp:
+        tags = json.loads(resp.read().decode("utf-8"))
+    best = None
+    for t in tags if isinstance(tags, list) else []:
+        vt = _version_tuple(t.get("name", ""))
+        if vt and (best is None or vt > best):
+            best = vt
+    return f"v{best[0]}.{best[1]}.{best[2]}" if best else None
+
+
+_update_check_cache = {"ts": 0.0, "payload": None}
+
+
+def _update_check_payload() -> dict:
+    """Cached {current, latest, update_available, error} for the sidebar."""
+    cache = _update_check_cache
+    now = time.monotonic()
+    if cache["payload"] is not None and now - cache["ts"] < UPDATE_CHECK_TTL:
+        return cache["payload"]
+
+    current_t = _version_tuple("v" + __version__)
+    error = None
+    try:
+        latest = _fetch_latest_tag()
+    except Exception:
+        latest, error = None, "lookup_failed"
+    latest_t = _version_tuple(latest) if latest else None
+
+    payload = {
+        "current": __version__,
+        "latest": latest,
+        "update_available": bool(latest_t and current_t and latest_t > current_t),
+        "error": error,
+    }
+    cache.update(ts=now, payload=payload)
+    return payload
+
+
+def _schedule_update(app: Flask, tag: str) -> bool:
+    """Self-update: download the tag's tarball, run its idempotent install.sh.
+
+    Runs in a transient systemd unit — NOT a detached child of this worker —
+    because install.sh restarts wg-admin at the end, and systemd's default
+    KillMode would kill any process still inside this service's cgroup
+    mid-install. Fails soft: on any scheduling error the old panel keeps
+    running untouched.
+    """
+    if app.config.get("TESTING"):
+        return True
+    script = (
+        f"rm -rf {UPDATE_CLONE_DIR} && mkdir -p {UPDATE_CLONE_DIR} && "
+        f"curl -fsSL --max-time 120 {UPDATE_REPO_URL}/archive/refs/tags/{tag}.tar.gz "
+        f"| tar xz -C {UPDATE_CLONE_DIR} --strip-components=1 && "
+        f"bash {UPDATE_CLONE_DIR}/install.sh; "
+        f"rm -rf {UPDATE_CLONE_DIR}"
+    )
+    try:
+        proc = subprocess.run(
+            ["systemd-run", "--collect", "--unit", UPDATE_UNIT,
+             "--description", f"wg-admin self-update to {tag}",
+             "bash", "-c", script],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0:
+            return True
+        app.logger.warning("systemd-run failed: %s", proc.stderr.strip())
+    except Exception:
+        app.logger.exception("Could not systemd-run the self-update")
+    # Fallback: detached shell. Good enough for the pre-restart part of
+    # install.sh; the tail after the wg-admin restart may be cut short.
+    _schedule_shell(app, script)
+    return True
 
 
 def format_duration(seconds):
@@ -211,6 +315,7 @@ def create_app() -> Flask:
                 "global_used_gb": quota_mod.global_usage_gb(bw),
                 "global_quota_gb": global_q,
                 "global_exceeded": quota_mod.global_quota_exceeded(bw, global_q),
+                "version": __version__,
             }
         except Exception:
             # If anything fails (bandwidth.json missing, etc.) — don't break every page
@@ -219,6 +324,7 @@ def create_app() -> Flask:
                 "global_used_gb": 0.0,
                 "global_quota_gb": 0.0,
                 "global_exceeded": False,
+                "version": __version__,
             }
 
     def login_required(f):
@@ -812,6 +918,36 @@ def create_app() -> Flask:
         )
         _schedule_shell(app, f"sleep 1; systemctl restart wg-quick@{interface}")
         return redirect(url_for("settings_page"))
+
+    # ─── Self-update ────────────────────────────────────────────────────
+
+    @app.route("/api/update/check")
+    @login_required
+    def api_update_check():
+        return jsonify(_update_check_payload())
+
+    @app.route("/settings/update", methods=["POST"])
+    @login_required
+    def settings_update():
+        tag = request.form.get("tag", "").strip()
+        tag_t = _version_tuple(tag)
+        cur_t = _version_tuple("v" + __version__)
+        if not tag_t or not cur_t:
+            flash("Tag de versão inválida.", "error")
+            return redirect(url_for("settings_page"))
+        if tag_t <= cur_t:
+            flash(f"Já estás na versão mais recente ({__version__}).", "success")
+            return redirect(url_for("settings_page"))
+        if wg.unit_is_active(UPDATE_UNIT):
+            flash("Já há uma atualização em curso.", "error")
+            return redirect(url_for("settings_page"))
+        _schedule_update(app, tag)
+        flash(
+            f"Atualização para {tag} agendada — o painel reinicia sozinho no fim "
+            "(a sessão mantém-se; progresso em `journalctl -u wg-admin-selfupdate -f`).",
+            "warning",
+        )
+        return redirect(url_for("peers_list"))
 
     @app.route("/peers/<peer_id>/edit", methods=["GET", "POST"])
     @login_required

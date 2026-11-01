@@ -202,6 +202,32 @@ body {
   color: var(--text-secondary);
 }
 
+/* Self-update button, injected by JS next to the version when a newer
+   GitHub tag exists (see base.html). */
+.sidebar-meta .meta-value .update-btn {
+  margin-top: 6px;
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 0 12px var(--accent-glow);
+  transition: background 0.15s ease;
+}
+
+.sidebar-meta .meta-value .update-btn:hover {
+  background: var(--accent-hover);
+}
+
+.sidebar-meta .meta-value .update-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+  box-shadow: none;
+}
+
 .sidebar-github {
   display: flex;
   align-items: center;

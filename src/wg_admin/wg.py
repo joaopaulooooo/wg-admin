@@ -352,6 +352,17 @@ def wg_interface_active(interface: str = "wg0") -> bool:
         return False
 
 
+def unit_is_active(unit: str) -> bool:
+    """True if the given systemd unit is currently active."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "--quiet", unit],
+        )
+        return result.returncode == 0
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 def wg_server_public_key(interface: str = "wg0") -> str:
     """Return the server's own public key via `wg show <interface> public-key`."""
     proc = subprocess.run(
